@@ -1,0 +1,5 @@
+{
+  "name": "3D Coin Sculptor",
+  "description": "Transform depth maps into detailed 3D coin models with customizable relief, rims, and mirroring.",
+  "requestFramePermissions": []
+}
