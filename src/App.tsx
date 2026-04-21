@@ -39,6 +39,8 @@ export default function App() {
       reader.onload = (event) => {
         if (event.target?.result) {
           setImageSrc(event.target.result as string);
+          // Reset position offsets so prior adjustments don't bleed into the new image
+          setSettings(prev => ({ ...prev, imageOffsetX: 0, imageOffsetY: 0 }));
         }
       };
       reader.readAsDataURL(file);
@@ -82,7 +84,7 @@ export default function App() {
 
   const resetSettings = () => {
     if (settings.diameter === 425) setSettings(LARGE_PLAQUE_PRESET);
-    else if (settings.diameter === 39 && settings.maxRelief === 1.2) setSettings(POCKET_2_PRESET);
+    else if (settings.diameter === 39 && settings.baseHeight === 1.2) setSettings(POCKET_2_PRESET);
     else if (settings.type === 'coin') setSettings(COIN_PRESET);
     else setSettings(PLAQUE_PRESET);
   };
@@ -94,38 +96,42 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-neutral-200 font-sans selection:bg-blue-500/30 flex flex-col">
+    <div className="min-h-screen bg-[#080808] text-neutral-200 font-sans selection:bg-amber-500/30 flex flex-col">
       {/* Header */}
-      <header className="border-b border-white/5 bg-black/40 backdrop-blur-xl sticky top-0 z-50">
+      <header className="border-b border-white/[0.06] bg-black/60 backdrop-blur-xl sticky top-0 z-50">
         <div className="max-w-[1600px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+          {/* Logo */}
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center shadow-lg shadow-blue-500/20">
-              <Coins className="w-5 h-5 text-white" />
+            <div className="w-9 h-9 bg-gradient-to-br from-amber-400 via-yellow-500 to-amber-600 rounded-xl flex items-center justify-center shadow-lg shadow-amber-500/30 ring-1 ring-amber-400/30">
+              <Coins className="w-5 h-5 text-black" />
             </div>
-            <h1 className="font-semibold text-base sm:text-lg tracking-tight text-white hidden sm:block">3D Coin Sculptor</h1>
-            <h1 className="font-semibold text-base tracking-tight text-white sm:hidden">Sculptor</h1>
+            <div className="hidden sm:flex flex-col -space-y-0.5">
+              <h1 className="font-bold text-sm tracking-tight text-white leading-none">3D Coin Sculptor</h1>
+              <span className="text-[10px] text-amber-400/70 tracking-wide font-medium">Coin · Medallion · Plaque Designer</span>
+            </div>
+            <h1 className="font-bold text-sm tracking-tight text-white sm:hidden">Sculptor</h1>
           </div>
-          
-          <div className="flex items-center gap-2 sm:gap-4">
-            <button 
+
+          {/* Actions */}
+          <div className="flex items-center gap-2 sm:gap-3">
+            <button
               onClick={() => fileInputRef.current?.click()}
-              className="text-xs text-neutral-400 hover:text-white transition-colors flex items-center gap-2 px-3 py-1.5 rounded-full hover:bg-white/5"
+              className="text-xs text-neutral-400 hover:text-white transition-colors flex items-center gap-1.5 px-3 py-2 rounded-lg hover:bg-white/5 border border-transparent hover:border-white/10"
             >
               <Upload className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Upload</span>
+              <span className="hidden sm:inline font-medium">Upload Image</span>
             </button>
-            <div className="h-4 w-px bg-white/10" />
-            <button 
+            <button
               onClick={handleExport}
-              className="bg-white text-black px-4 py-1.5 rounded-full text-xs font-medium hover:bg-neutral-200 transition-colors flex items-center gap-2 shadow-lg shadow-white/10"
+              className="bg-gradient-to-r from-amber-500 to-yellow-500 text-black px-4 py-2 rounded-lg text-xs font-bold hover:from-amber-400 hover:to-yellow-400 transition-all flex items-center gap-2 shadow-lg shadow-amber-500/20"
             >
               <Download className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Export STL</span>
               <span className="sm:hidden">Export</span>
             </button>
-            <button 
+            <button
               onClick={() => setIsMobileSettingsOpen(true)}
-              className="lg:hidden p-2 text-neutral-400 hover:text-white transition-colors"
+              className="lg:hidden p-2 text-neutral-400 hover:text-white transition-colors rounded-lg hover:bg-white/5"
             >
               <Settings2 className="w-5 h-5" />
             </button>
@@ -135,32 +141,59 @@ export default function App() {
 
       <main className="flex-1 max-w-[1600px] mx-auto w-full px-4 sm:px-6 py-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Left Column: Viewer */}
-        <div className="lg:col-span-8 flex flex-col gap-6">
-          <div className="flex-1 min-h-[400px] lg:min-h-0 relative">
-            <CoinViewer 
-              imageSrc={imageSrc} 
-              settings={settings} 
+        <div className="lg:col-span-8 flex flex-col gap-5">
+          {/* 3D Viewer */}
+          <div className="flex-1 min-h-[420px] lg:min-h-0 relative rounded-2xl overflow-hidden border border-white/[0.06] shadow-2xl shadow-black/60">
+            <CoinViewer
+              imageSrc={imageSrc}
+              settings={settings}
               useAdvancedMaterials={useAdvancedMaterials}
               onGeometryGenerated={(geo) => { geometryRef.current = geo; }}
             />
           </div>
 
-          {/* Info Card */}
-          <div className="bg-neutral-900/50 border border-white/5 rounded-2xl p-5 flex gap-4 items-start">
-            <div className="p-2 bg-blue-500/10 rounded-lg shrink-0">
-              <Info className="w-5 h-5 text-blue-400" />
-            </div>
-            <div>
-              <h3 className="text-sm font-medium text-white mb-1">How it works</h3>
-              <p className="text-xs text-neutral-400 leading-relaxed">
-                This tool transforms your 2D image into a 3D relief. Lighter areas of the image are extruded higher, while darker areas remain closer to the coin base. For best results, use a high-contrast grayscale depth map.
-              </p>
-            </div>
+          {/* Feature strip */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {[
+              { icon: '🖼️', label: 'Portrait Relief',   desc: 'AI depth from any image' },
+              { icon: '🔤', label: 'Arc Inscription',   desc: 'Top & bottom arc text' },
+              { icon: '🪙', label: 'Raised or Engraved', desc: '3 sculpting modes' },
+              { icon: '📦', label: 'STL Export',         desc: 'Print or cast ready' },
+            ].map(f => (
+              <div key={f.label} className="bg-neutral-900/60 border border-white/[0.06] rounded-xl p-3 flex flex-col gap-1">
+                <span className="text-xl leading-none">{f.icon}</span>
+                <span className="text-[11px] font-semibold text-white mt-1">{f.label}</span>
+                <span className="text-[10px] text-neutral-500">{f.desc}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* How it works */}
+          <div className="bg-neutral-900/40 border border-white/[0.06] rounded-2xl p-5">
+            <h2 className="text-xs font-bold text-neutral-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+              <Info className="w-3.5 h-3.5" />
+              How It Works
+            </h2>
+            <ol className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              {[
+                { n: '1', title: 'Upload a portrait',  body: 'Use a high-contrast photo or grayscale depth map. Brighter = higher relief.' },
+                { n: '2', title: 'Configure the design', body: 'Choose a preset, add arc text, set relief depth and signature font.' },
+                { n: '3', title: 'Export & print',      body: 'Download the STL file and send it straight to your 3D printer or foundry.' },
+              ].map(s => (
+                <li key={s.n} className="flex gap-3">
+                  <span className="w-6 h-6 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400 text-[11px] font-bold flex items-center justify-center shrink-0 mt-0.5">{s.n}</span>
+                  <div>
+                    <p className="text-xs font-semibold text-white mb-0.5">{s.title}</p>
+                    <p className="text-[11px] text-neutral-500 leading-relaxed">{s.body}</p>
+                  </div>
+                </li>
+              ))}
+            </ol>
           </div>
         </div>
 
         {/* Right Column: Controls (Hidden on mobile, shown in drawer) */}
-        <div className="hidden lg:flex lg:col-span-4 flex-col gap-6">
+        <div className="hidden lg:flex lg:col-span-4 flex-col gap-5">
           <SettingsPanel 
             imageSrc={imageSrc}
             settings={settings}
@@ -228,13 +261,25 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      <input 
-        type="file" 
+      <input
+        type="file"
         ref={fileInputRef}
-        accept="image/*" 
+        accept="image/*"
         onChange={handleImageUpload}
         className="hidden"
       />
+
+      {/* Footer */}
+      <footer className="border-t border-white/[0.04] bg-black/40 py-4 px-6 mt-auto">
+        <div className="max-w-[1600px] mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
+          <p className="text-[10px] text-neutral-600">
+            © {new Date().getFullYear()} 3D Coin Sculptor — Online Coin, Medallion &amp; Plaque Designer
+          </p>
+          <p className="text-[10px] text-neutral-700">
+            Design · Export STL · 3D Print · Bronze Cast
+          </p>
+        </div>
+      </footer>
     </div>
   );
 }
@@ -275,88 +320,120 @@ function SettingsPanel({
   setUseAdvancedMaterials
 }: SettingsPanelProps) {
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Model Type */}
-      <section className="bg-neutral-900 border border-white/5 rounded-2xl p-6">
-        <h2 className="text-sm font-medium text-white mb-4 flex items-center gap-2">
-          <Layout className="w-4 h-4 text-neutral-400" />
-          Model Type
+      <section className="bg-neutral-900/80 border border-white/[0.07] rounded-2xl p-5 shadow-xl shadow-black/30">
+        <h2 className="text-xs font-bold text-neutral-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+          <Layout className="w-3.5 h-3.5" />
+          Choose a Preset
         </h2>
-        <div className="grid grid-cols-3 gap-2">
-          <button 
+
+        {/* Font quick-reference */}
+        <div className="mb-3 flex flex-col gap-1 px-1">
+          <div className="flex items-center justify-between">
+            <span className="text-[9px] text-neutral-500 uppercase tracking-wider">Primary Plaque (Large)</span>
+            <span className="text-[9px] font-semibold text-amber-400/80 tracking-wide">Trajan Semibold</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-[9px] text-neutral-500 uppercase tracking-wider">Replica Pocket Coins</span>
+            <span className="text-[9px] font-semibold text-amber-400/80 tracking-wide">Trajan Bold</span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <button
             onClick={() => setPreset('coin')}
-            className={`py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all ${settings.type === 'coin' && settings.diameter !== 425 ? 'bg-white text-black shadow-lg shadow-white/10' : 'bg-white/5 text-neutral-500 hover:text-neutral-300'}`}
+            className={`py-3 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all flex flex-col items-center gap-1 border ${settings.type === 'coin' && settings.diameter !== 425 && !(settings.diameter === 39 && settings.baseHeight === 1.2) ? 'bg-white/10 border-white/30 text-white shadow-lg' : 'bg-white/[0.03] border-white/[0.06] text-neutral-500 hover:text-neutral-300 hover:border-white/15'}`}
           >
-            Coin (38mm)
+            <span className="text-lg">🪙</span>
+            <span>Pocket Coin</span>
+            <span className="text-[8px] font-normal opacity-60 normal-case">38 mm</span>
           </button>
-          <button 
+          <button
             onClick={() => setPreset('plaque')}
-            className={`py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all ${settings.type === 'plaque' && settings.diameter !== 425 ? 'bg-white text-black shadow-lg shadow-white/10' : 'bg-white/5 text-neutral-500 hover:text-neutral-300'}`}
+            className={`py-3 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all flex flex-col items-center gap-1 border ${settings.type === 'plaque' && settings.diameter !== 425 ? 'bg-white/10 border-white/30 text-white shadow-lg' : 'bg-white/[0.03] border-white/[0.06] text-neutral-500 hover:text-neutral-300 hover:border-white/15'}`}
           >
-            Plaque (150mm)
+            <span className="text-lg">🏅</span>
+            <span>Plaque</span>
+            <span className="text-[8px] font-normal opacity-60 normal-case">150 mm</span>
           </button>
-          <button 
+          <button
             onClick={() => setPreset('large-plaque')}
-            className={`py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all ${settings.diameter === 425 ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/20' : 'bg-white/5 text-neutral-500 hover:text-neutral-300'}`}
+            className={`py-3 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all flex flex-col items-center gap-1 border ${settings.diameter === 425 ? 'bg-amber-500/20 border-amber-500/60 text-amber-300 shadow-lg shadow-amber-500/10' : 'bg-white/[0.03] border-white/[0.06] text-neutral-500 hover:text-neutral-300 hover:border-white/15'}`}
           >
-            Large (425mm)
+            <span className="text-lg">🏆</span>
+            <span>Primary Plaque</span>
+            <span className="text-[8px] font-normal opacity-70">425mm · Large Design</span>
           </button>
-          <button 
+          <button
             onClick={() => setPreset('pocket-2')}
-            className={`py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all ${settings.diameter === 39 && settings.maxRelief === 1.2 ? 'bg-white text-black shadow-lg shadow-white/10' : 'bg-white/5 text-neutral-500 hover:text-neutral-300'}`}
+            className={`py-3 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all flex flex-col items-center gap-1 border ${settings.diameter === 39 && settings.baseHeight === 1.2 ? 'bg-white/10 border-white/30 text-white shadow-lg' : 'bg-white/[0.03] border-white/[0.06] text-neutral-500 hover:text-neutral-300 hover:border-white/15'}`}
           >
-            Pocket 2 (39mm)
+            <span className="text-lg">🎖️</span>
+            <span>Replica Pocket</span>
+            <span className="text-[8px] font-normal opacity-60 normal-case">39 mm · Bold</span>
           </button>
         </div>
 
-        {settings.diameter === 39 && settings.maxRelief === 1.2 && (
+        {/* Replica Pocket Coin info card */}
+        {settings.diameter === 39 && settings.baseHeight === 1.2 && (
           <div className="mt-4 p-4 bg-white/5 rounded-xl border border-white/10 space-y-3">
-            <div className="flex items-center gap-2 text-white">
-              <Info className="w-3.5 h-3.5 text-blue-400" />
-              <span className="text-[10px] font-bold uppercase tracking-wider">Pocket 2 Specs</span>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-white">
+                <Info className="w-3.5 h-3.5 text-blue-400" />
+                <span className="text-[10px] font-bold uppercase tracking-wider">Replica Pocket Coin Specs</span>
+              </div>
+              <span className="text-[9px] font-bold text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded-full border border-amber-400/20">Trajan Bold</span>
             </div>
             <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-[10px]">
               <div className="text-neutral-500 uppercase tracking-tight">Diameter</div>
-              <div className="text-neutral-300 font-medium">38-40mm</div>
+              <div className="text-neutral-300 font-medium">38–40mm</div>
               <div className="text-neutral-500 uppercase tracking-tight">Thickness</div>
-              <div className="text-neutral-300 font-medium">3-4mm max</div>
+              <div className="text-neutral-300 font-medium">3–4mm max</div>
               <div className="text-neutral-500 uppercase tracking-tight">Relief Depth</div>
-              <div className="text-neutral-300 font-medium">0.8-1.2mm</div>
-              <div className="text-neutral-500 uppercase tracking-tight">Typography</div>
-              <div className="text-neutral-300 font-medium">Min 3-4mm height</div>
+              <div className="text-neutral-300 font-medium">0.8–1.2mm</div>
+              <div className="text-neutral-500 uppercase tracking-tight">Min Text Height</div>
+              <div className="text-neutral-300 font-medium">3–4mm</div>
             </div>
           </div>
         )}
+
+        {/* Primary Plaque info card */}
         {settings.diameter === 425 && (
-          <div className="mt-4 p-4 bg-blue-500/10 rounded-xl border border-blue-500/20 space-y-3">
-            <div>
-              <span className="text-[10px] font-bold uppercase text-blue-400 block mb-1.5 tracking-wider">Large Plaque Specifications</span>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-2">
-                <div className="flex flex-col">
-                  <span className="text-[9px] text-blue-400/60 uppercase">Dimensions</span>
-                  <span className="text-[10px] text-blue-300 font-medium">425mm Ø • 6mm Base</span>
-                </div>
-                <div className="flex flex-col">
-                  <span className="text-[9px] text-blue-400/60 uppercase">Relief</span>
-                  <span className="text-[10px] text-blue-300 font-medium">10mm Max • 15mm Rim</span>
-                </div>
+          <div className="mt-4 p-4 bg-amber-500/10 rounded-xl border border-amber-500/20 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold uppercase text-amber-400 tracking-wider">Primary Plaque — Large Design</span>
+              <span className="text-[9px] font-bold text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded-full border border-amber-400/20">Trajan Semibold</span>
+            </div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+              <div className="flex flex-col">
+                <span className="text-[9px] text-amber-400/60 uppercase">Dimensions</span>
+                <span className="text-[10px] text-amber-300 font-medium">425mm Ø · 6mm Base</span>
+              </div>
+              <div className="flex flex-col">
+                <span className="text-[9px] text-amber-400/60 uppercase">Relief</span>
+                <span className="text-[10px] text-amber-300 font-medium">10mm Max · 15mm Rim</span>
               </div>
             </div>
-            
-            <div className="pt-2 border-t border-blue-500/10">
-              <span className="text-[10px] font-bold uppercase text-blue-400 block mb-1.5 tracking-wider">Design Guidelines</span>
+
+            <div className="pt-2 border-t border-amber-500/10">
+              <span className="text-[10px] font-bold uppercase text-amber-400 block mb-1.5 tracking-wider">Design Guidelines</span>
               <div className="space-y-1.5">
                 <div className="flex justify-between items-center">
-                  <span className="text-[10px] text-blue-400/80">Primary Text Height</span>
-                  <span className="text-[10px] text-blue-300 font-mono">25–30mm</span>
+                  <span className="text-[10px] text-amber-400/80">Primary Text Height</span>
+                  <span className="text-[10px] text-amber-300 font-mono">25–30mm</span>
                 </div>
                 <div className="flex justify-between items-center">
-                  <span className="text-[10px] text-blue-400/80">Secondary Text Height</span>
-                  <span className="text-[10px] text-blue-300 font-mono">15–20mm</span>
+                  <span className="text-[10px] text-amber-400/80">Secondary Text Height</span>
+                  <span className="text-[10px] text-amber-300 font-mono">15–20mm</span>
                 </div>
                 <div className="flex justify-between items-center">
-                  <span className="text-[10px] text-blue-400/80">Text Margin from Edge</span>
-                  <span className="text-[10px] text-blue-300 font-mono">15–20mm</span>
+                  <span className="text-[10px] text-amber-400/80">Text Margin from Edge</span>
+                  <span className="text-[10px] text-amber-300 font-mono">15–20mm</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-[10px] text-amber-400/80">Recommended Font</span>
+                  <span className="text-[10px] text-amber-300 font-mono">Trajan Semibold</span>
                 </div>
               </div>
             </div>
@@ -365,25 +442,25 @@ function SettingsPanel({
       </section>
 
       {/* Image Upload */}
-      <section className="bg-neutral-900 border border-white/5 rounded-2xl p-6">
-        <h2 className="text-sm font-medium text-white mb-4 flex items-center gap-2">
-          <Upload className="w-4 h-4 text-neutral-400" />
+      <section className="bg-neutral-900/80 border border-white/[0.07] rounded-2xl p-5 shadow-xl shadow-black/30">
+        <h2 className="text-xs font-bold text-neutral-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+          <Upload className="w-3.5 h-3.5" />
           Source Image
         </h2>
         
         <div className="relative group mb-4">
-          <div className="aspect-square w-full rounded-xl overflow-hidden border-2 border-dashed border-white/10 group-hover:border-blue-500/50 transition-colors bg-black/40 relative">
-            <img 
-              src={imageSrc} 
-              alt="Preview" 
-              className="w-full h-full object-cover opacity-50 group-hover:opacity-70 transition-opacity"
-              referrerPolicy="no-referrer"
-            />
-            <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center">
-              <Upload className="w-8 h-8 text-neutral-500 mb-2 group-hover:text-blue-400 transition-colors" />
-              <p className="text-xs text-neutral-400 font-medium">Click to upload depth map</p>
-              <p className="text-[10px] text-neutral-500 mt-1">PNG, JPG up to 5MB</p>
-            </div>
+            <div className="aspect-square w-full rounded-xl overflow-hidden border-2 border-dashed border-white/10 group-hover:border-blue-500/50 transition-colors bg-black/40 relative">
+              <img
+                src={imageSrc}
+                alt="Preview"
+                className="w-full h-full object-cover opacity-50 group-hover:opacity-70 transition-opacity"
+                referrerPolicy="no-referrer"
+              />
+              <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center">
+                <Upload className="w-8 h-8 text-neutral-500 mb-2 group-hover:text-blue-400 transition-colors" />
+                <p className="text-xs text-neutral-400 font-medium">Click to upload depth map</p>
+                <p className="text-[10px] text-neutral-500 mt-1">JPG, PNG, GIF, BMP, WebP up to 5MB</p>
+              </div>
             <button 
               onClick={() => fileInputRef.current?.click()}
               className="absolute inset-0 w-full h-full cursor-pointer"
@@ -420,11 +497,11 @@ function SettingsPanel({
       </section>
 
       {/* Material Settings */}
-      <section className="bg-neutral-900 border border-white/5 rounded-2xl p-6">
+      <section className="bg-neutral-900/80 border border-white/[0.07] rounded-2xl p-5 shadow-xl shadow-black/30">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-sm font-medium text-white flex items-center gap-2">
-            <Palette className="w-4 h-4 text-neutral-400" />
-            Material Properties
+          <h2 className="text-xs font-bold text-neutral-400 uppercase tracking-widest flex items-center gap-2">
+            <Palette className="w-3.5 h-3.5" />
+            Material
           </h2>
           <button 
             onClick={() => setUseAdvancedMaterials(!useAdvancedMaterials)}
@@ -522,17 +599,19 @@ function SettingsPanel({
       </section>
 
       {/* Settings */}
-      <section className="bg-neutral-900 border border-white/5 rounded-2xl overflow-hidden">
+      <section className="bg-neutral-900/80 border border-white/[0.07] rounded-2xl overflow-hidden shadow-xl shadow-black/30">
         {!hideHeader && (
-          <button 
+          <button
             onClick={() => setIsSettingsOpen(!isSettingsOpen)}
-            className="w-full px-6 py-4 flex items-center justify-between hover:bg-white/5 transition-colors"
+            className="w-full px-5 py-4 flex items-center justify-between hover:bg-white/[0.03] transition-colors"
           >
             <div className="flex items-center gap-2">
-              <Settings2 className="w-4 h-4 text-neutral-400" />
-              <span className="text-sm font-medium text-white">Parameters</span>
+              <Settings2 className="w-3.5 h-3.5 text-neutral-500" />
+              <span className="text-xs font-bold text-neutral-400 uppercase tracking-widest">Parameters</span>
             </div>
-            {isSettingsOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+            {isSettingsOpen
+              ? <ChevronDown className="w-4 h-4 text-neutral-600" />
+              : <ChevronRight className="w-4 h-4 text-neutral-600" />}
           </button>
         )}
 
@@ -577,17 +656,26 @@ function SettingsPanel({
                     <p className="text-[10px] text-neutral-500">How should the design appear?</p>
                   </div>
                   
-                  <div className="grid grid-cols-2 gap-2">
-                    <button 
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
                       onClick={() => updateSetting('reliefStyle', 'elevated')}
                       className={`flex flex-col items-center gap-2 p-3 rounded-xl border transition-all ${settings.reliefStyle === 'elevated' ? 'bg-blue-500/20 border-blue-500 text-white' : 'bg-white/5 border-white/5 text-neutral-400 hover:bg-white/10'}`}
                     >
                       <div className="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center">
                         <ChevronRight className="w-5 h-5 -rotate-90" />
                       </div>
-                      <span className="text-[10px] font-bold uppercase tracking-wider">Raised (3D)</span>
+                      <span className="text-[10px] font-bold uppercase tracking-wider">Raised</span>
                     </button>
-                    <button 
+                    <button
+                      onClick={() => updateSetting('reliefStyle', 'emboss')}
+                      className={`flex flex-col items-center gap-2 p-3 rounded-xl border transition-all ${settings.reliefStyle === 'emboss' ? 'bg-amber-500/20 border-amber-500 text-white' : 'bg-white/5 border-white/5 text-neutral-400 hover:bg-white/10'}`}
+                    >
+                      <div className="w-8 h-8 rounded-full bg-amber-500/20 flex items-center justify-center">
+                        <span className="text-base">⬡</span>
+                      </div>
+                      <span className="text-[10px] font-bold uppercase tracking-wider">Emboss</span>
+                    </button>
+                    <button
                       onClick={() => updateSetting('reliefStyle', 'embedded')}
                       className={`flex flex-col items-center gap-2 p-3 rounded-xl border transition-all ${settings.reliefStyle === 'embedded' ? 'bg-blue-500/20 border-blue-500 text-white' : 'bg-white/5 border-white/5 text-neutral-400 hover:bg-white/10'}`}
                     >
@@ -603,7 +691,7 @@ function SettingsPanel({
                   <div className="flex flex-col gap-2">
                     <div className="flex items-center justify-between">
                       <span className="text-[10px] text-neutral-400 font-medium">Subject is lighter than background</span>
-                      <button 
+                      <button
                         onClick={() => updateSetting('reliefStyle', settings.reliefStyle === 'elevated' ? 'embedded' : 'elevated')}
                         className="text-[10px] text-blue-400 hover:underline font-medium"
                       >
@@ -656,9 +744,9 @@ function SettingsPanel({
                 </div>
 
                 <div className="space-y-1 pt-2">
-                  <SettingSlider 
-                    label="Surface Texture" 
-                    value={settings.surfaceNoise} 
+                  <SettingSlider
+                    label="Surface Texture"
+                    value={settings.surfaceNoise}
                     min={0} max={0.5} step={0.01}
                     onChange={(v) => updateSetting('surfaceNoise', v)}
                   />
@@ -667,10 +755,226 @@ function SettingsPanel({
                     <span className="text-[9px] text-neutral-600 uppercase tracking-widest">Extreme</span>
                   </div>
                 </div>
-                <SettingSlider 
-                  label="Resolution" 
-                  value={settings.gridResolution} 
-                  min={64} max={1024} step={32}
+
+                {/* Text Overlay */}
+                <div className="space-y-3 p-4 bg-white/5 rounded-xl border border-white/10">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold uppercase text-neutral-400 tracking-wider">Text Overlay</span>
+                    <span className="text-[9px] text-amber-400/80 font-semibold tracking-wide">
+                      {settings.textFont === 'bold' ? 'Trajan Bold' : 'Trajan Semibold'}
+                    </span>
+                  </div>
+
+                  {/* Top arc */}
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[9px] text-neutral-500 uppercase tracking-wider w-20 shrink-0">Top Arc</span>
+                      <span className="text-[9px] text-neutral-600">10 → 2 o'clock</span>
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="e.g. TRANSFORMING MINDS · BUILDING NATIONS"
+                      value={settings.topText}
+                      onChange={(e) => updateSetting('topText', e.target.value)}
+                      className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder-neutral-600 focus:outline-none focus:border-blue-500/50 transition-colors"
+                      style={{ fontFamily: '"Trajan Pro", serif', letterSpacing: '0.05em' }}
+                    />
+                  </div>
+
+                  {/* Bottom arc */}
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[9px] text-neutral-500 uppercase tracking-wider w-20 shrink-0">Bottom Arc</span>
+                      <span className="text-[9px] text-neutral-600">7 → 5 o'clock</span>
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="e.g. FAITH · NATION · EXCELLENCE"
+                      value={settings.bottomText}
+                      onChange={(e) => updateSetting('bottomText', e.target.value)}
+                      className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder-neutral-600 focus:outline-none focus:border-blue-500/50 transition-colors"
+                      style={{ fontFamily: '"Trajan Pro", serif', letterSpacing: '0.05em' }}
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <SettingSlider
+                      label="Text Size"
+                      value={settings.textSize}
+                      min={0.4} max={2.0} step={0.05}
+                      onChange={(v) => updateSetting('textSize', v)}
+                    />
+                    <SettingSlider
+                      label="Text Depth"
+                      value={settings.textDepthMm}
+                      min={0.2} max={5.0} step={0.1} unit="mm"
+                      onChange={(v) => updateSetting('textDepthMm', v)}
+                    />
+                  </div>
+
+                  {/* Signature */}
+                  <div className="space-y-1 pt-1 border-t border-white/5">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[9px] text-neutral-500 uppercase tracking-wider w-20 shrink-0">Signature</span>
+                      <span className="text-[9px] text-neutral-600">centred below portrait · optional</span>
+                    </div>
+                    {/* Font picker */}
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <button
+                        onClick={() => updateSetting('signatureFont', 'great-vibes')}
+                        className={`py-1.5 px-2 rounded-lg border text-[11px] transition-all ${settings.signatureFont === 'great-vibes' ? 'bg-amber-500/20 border-amber-500 text-white' : 'bg-white/5 border-white/5 text-neutral-400 hover:bg-white/10'}`}
+                        style={{ fontFamily: '"Great Vibes", cursive', fontSize: '14px' }}
+                      >
+                        Cursive
+                      </button>
+                      <button
+                        onClick={() => updateSetting('signatureFont', 'trajan')}
+                        className={`py-1.5 px-2 rounded-lg border text-[10px] font-bold uppercase tracking-wider transition-all ${settings.signatureFont === 'trajan' ? 'bg-amber-500/20 border-amber-500 text-white' : 'bg-white/5 border-white/5 text-neutral-400 hover:bg-white/10'}`}
+                        style={{ fontFamily: '"Trajan Pro", serif' }}
+                      >
+                        Trajan
+                      </button>
+                    </div>
+                    <p className="text-[9px] text-neutral-600 italic">Trajan has thicker strokes — better for 3D printing &amp; casting.</p>
+                    <input
+                      type="text"
+                      placeholder="e.g. Poju Oyemade"
+                      value={settings.signatureText}
+                      onChange={(e) => updateSetting('signatureText', e.target.value)}
+                      className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-amber-500/50 transition-colors"
+                      style={{ fontFamily: settings.signatureFont === 'trajan' ? '"Trajan Pro", serif' : '"Great Vibes", cursive' }}
+                    />
+                    <SettingSlider
+                      label="Signature Size"
+                      value={settings.signatureSize}
+                      min={0.4} max={2.0} step={0.05}
+                      onChange={(v) => updateSetting('signatureSize', v)}
+                    />
+                    <div className="grid grid-cols-2 gap-2">
+                      <SettingSlider
+                        label="◀ ▶ Position"
+                        value={settings.signatureOffsetX}
+                        min={-1.0} max={1.0} step={0.02}
+                        displayValue={settings.signatureOffsetX === 0 ? 'centre' : `${settings.signatureOffsetX > 0 ? '+' : ''}${settings.signatureOffsetX.toFixed(2)}`}
+                        onChange={(v) => updateSetting('signatureOffsetX', v)}
+                      />
+                      <SettingSlider
+                        label="▲ ▼ Position"
+                        value={settings.signatureOffsetY}
+                        min={-1.0} max={1.0} step={0.02}
+                        displayValue={settings.signatureOffsetY === 0 ? 'centre' : `${settings.signatureOffsetY > 0 ? '+' : ''}${settings.signatureOffsetY.toFixed(2)}`}
+                        onChange={(v) => updateSetting('signatureOffsetY', v)}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Portrait Medallion Ring */}
+                  <div className="space-y-2 pt-1 border-t border-white/5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[9px] text-neutral-500 uppercase tracking-wider">Portrait Ring</span>
+                        <span className="text-[9px] text-neutral-600">border circle between portrait &amp; text</span>
+                      </div>
+                      {/* Toggle */}
+                      <button
+                        onClick={() => updateSetting('medallionRingEnabled', !settings.medallionRingEnabled)}
+                        className={`relative w-9 h-5 rounded-full transition-colors ${settings.medallionRingEnabled ? 'bg-amber-500' : 'bg-neutral-700'}`}
+                      >
+                        <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${settings.medallionRingEnabled ? 'translate-x-4' : 'translate-x-0'}`} />
+                      </button>
+                    </div>
+                    {settings.medallionRingEnabled && (
+                      <div className="space-y-2 pl-1">
+                        <p className="text-[9px] text-neutral-600 italic">Position auto-calculated between portrait and text arc.</p>
+                        <SettingSlider
+                          label="Ring Width"
+                          value={settings.medallionRingWidthMm}
+                          min={0.5} max={4.0} step={0.1} unit="mm"
+                          onChange={(v) => updateSetting('medallionRingWidthMm', v)}
+                        />
+                        <SettingSlider
+                          label="Ring Depth"
+                          value={settings.medallionRingDepthMm}
+                          min={0.2} max={4.0} step={0.1} unit="mm"
+                          onChange={(v) => updateSetting('medallionRingDepthMm', v)}
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Arc span controls */}
+                  <div className="grid grid-cols-2 gap-2 pt-1 border-t border-white/5">
+                    <SettingSlider
+                      label="Top Span"
+                      value={settings.topTextSpan}
+                      min={60} max={330} step={5}
+                      displayValue={`${settings.topTextSpan}°`}
+                      onChange={(v) => updateSetting('topTextSpan', v)}
+                    />
+                    <SettingSlider
+                      label="Bot Span"
+                      value={settings.bottomTextSpan}
+                      min={40} max={180} step={5}
+                      displayValue={`${settings.bottomTextSpan}°`}
+                      onChange={(v) => updateSetting('bottomTextSpan', v)}
+                    />
+                  </div>
+
+                  <p className="text-[9px] text-neutral-600 leading-tight italic">
+                    Wider span = larger font for same text. Re-generate after editing.
+                  </p>
+                </div>
+
+                <div className="space-y-3 p-4 bg-white/5 rounded-xl border border-white/10">
+                  <span className="text-[10px] font-bold uppercase text-neutral-400 tracking-wider block">Image Position</span>
+
+                  {/* Horizontal slider */}
+                  <div className="space-y-1.5">
+                    <div className="flex justify-between items-center">
+                      <label className="text-[11px] text-neutral-400 font-medium uppercase tracking-wider">Horizontal</label>
+                      <span className="text-xs font-mono text-blue-400">{settings.imageOffsetX.toFixed(2)}</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={-0.5} max={0.5} step={0.01}
+                      value={settings.imageOffsetX}
+                      onChange={(e) => updateSetting('imageOffsetX', parseFloat(e.target.value))}
+                      className="w-full h-1.5 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                    />
+                    <div className="flex justify-between px-1">
+                      <span className="text-[9px] text-neutral-500 uppercase tracking-widest">◀ Left</span>
+                      <span className="text-[9px] text-neutral-500 uppercase tracking-widest">Right ▶</span>
+                    </div>
+                  </div>
+
+                  {/* Vertical slider */}
+                  <div className="space-y-1.5">
+                    <div className="flex justify-between items-center">
+                      <label className="text-[11px] text-neutral-400 font-medium uppercase tracking-wider">Vertical</label>
+                      <span className="text-xs font-mono text-blue-400">{settings.imageOffsetY.toFixed(2)}</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={-0.5} max={0.5} step={0.01}
+                      value={settings.imageOffsetY}
+                      onChange={(e) => updateSetting('imageOffsetY', parseFloat(e.target.value))}
+                      className="w-full h-1.5 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                    />
+                    <div className="flex justify-between px-1">
+                      <span className="text-[9px] text-neutral-500 uppercase tracking-widest">▲ Up</span>
+                      <span className="text-[9px] text-neutral-500 uppercase tracking-widest">Down ▼</span>
+                    </div>
+                  </div>
+
+                  <p className="text-[9px] text-neutral-600 leading-tight italic">
+                    Use these if the portrait or text appears off-centre on the coin.
+                  </p>
+                </div>
+
+                <SettingSlider
+                  label="Resolution"
+                  value={settings.gridResolution}
+                  min={64} max={256} step={32}
                   onChange={(v) => updateSetting('gridResolution', v)}
                 />
               </div>
@@ -697,15 +1001,16 @@ interface SettingSliderProps {
   max: number;
   step: number;
   unit?: string;
+  displayValue?: string;
   onChange: (val: number) => void;
 }
 
-function SettingSlider({ label, value, min, max, step, unit, onChange }: SettingSliderProps) {
+function SettingSlider({ label, value, min, max, step, unit, displayValue, onChange }: SettingSliderProps) {
   return (
     <div className="space-y-2">
       <div className="flex justify-between items-center">
         <label className="text-[11px] text-neutral-400 font-medium uppercase tracking-wider">{label}</label>
-        <span className="text-xs font-mono text-blue-400">{value}{unit}</span>
+        <span className="text-xs font-mono text-blue-400">{displayValue ?? `${value}${unit ?? ''}`}</span>
       </div>
       <input 
         type="range" 

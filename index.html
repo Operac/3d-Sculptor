@@ -3,11 +3,97 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>My Google AI Studio App</title>
+
+    <!-- ── Primary SEO ─────────────────────────────────────────────────── -->
+    <title>3D Coin Sculptor — Free Online Coin & Medallion STL Designer</title>
+    <meta name="description" content="Design and export professional 3D coins, medallions, commemorative plaques and challenge coins online. Upload your portrait, add arc text, choose raised or engraved relief, and download a print-ready STL file instantly — no software needed." />
+    <meta name="keywords" content="3D coin designer, coin STL generator, commemorative coin maker, medallion designer, challenge coin creator, portrait coin 3D print, coin relief design, STL export coin, bronze coin 3D print, coin depth map, plaque designer, bas-relief coin, 3D printable coin, custom coin maker, coin engraving tool, medallion STL, coin casting design, pocket coin designer, online coin tool, free STL generator" />
+    <meta name="author" content="3D Coin Sculptor" />
+    <meta name="robots" content="index, follow" />
+    <link rel="canonical" href="https://operac.github.io/3d-coin-sculptor/" />
+
+    <!-- ── Open Graph (Facebook / LinkedIn / WhatsApp) ──────────────────── -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://operac.github.io/3d-coin-sculptor/" />
+    <meta property="og:title" content="3D Coin Sculptor — Design & Export Coins, Medallions & Plaques" />
+    <meta property="og:description" content="Turn any portrait into a professional 3D coin or commemorative plaque. Add raised text, portrait rings and custom relief — then download a print-ready STL in seconds." />
+    <meta property="og:image" content="https://operac.github.io/3d-coin-sculptor/og-image.jpg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:site_name" content="3D Coin Sculptor" />
+    <meta property="og:locale" content="en_US" />
+
+    <!-- ── Twitter / X Card ─────────────────────────────────────────────── -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:url" content="https://operac.github.io/3d-coin-sculptor/" />
+    <meta name="twitter:title" content="3D Coin Sculptor — Free Online STL Coin Designer" />
+    <meta name="twitter:description" content="Design portrait coins, medallions and commemorative plaques online. Export STL files ready for 3D printing or bronze casting." />
+    <meta name="twitter:image" content="https://operac.github.io/3d-coin-sculptor/og-image.jpg" />
+
+    <!-- ── Structured Data (Google Rich Results) ────────────────────────── -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "3D Coin Sculptor",
+      "url": "https://operac.github.io/3d-coin-sculptor/",
+      "description": "Free online tool to design 3D coins, medallions, commemorative plaques and challenge coins. Upload a portrait, configure arc text and relief depth, then export a print-ready STL file.",
+      "applicationCategory": "DesignApplication",
+      "operatingSystem": "Web Browser",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      },
+      "featureList": [
+        "Portrait relief generation from image",
+        "Arc inscription text (top and bottom)",
+        "Raised, Embossed and Engraved modes",
+        "Medallion portrait ring",
+        "Signature font options (Cursive, Trajan Pro)",
+        "Double-faced coin support",
+        "STL export for 3D printing and casting",
+        "Pocket coin and large plaque presets"
+      ],
+      "screenshot": "https://operac.github.io/3d-coin-sculptor/og-image.jpg"
+    }
+    </script>
+
+    <!-- ── Fonts ─────────────────────────────────────────────────────────── -->
+    <style>
+      /* Trajan Pro — loaded from local font files in /public/fonts/ */
+      @font-face {
+        font-family: 'Trajan Pro';
+        font-weight: 400;
+        font-style: normal;
+        font-display: swap;
+        src: url('/fonts/TrajanPro-Regular.ttf') format('truetype');
+      }
+      @font-face {
+        font-family: 'Trajan Pro';
+        font-weight: 600;
+        font-style: normal;
+        font-display: swap;
+        src: url('/fonts/TrajanPro-Semibold.otf') format('opentype');
+      }
+      @font-face {
+        font-family: 'Trajan Pro';
+        font-weight: 700;
+        font-style: normal;
+        font-display: swap;
+        src: url('/fonts/TrajanPro-Bold.ttf') format('truetype');
+      }
+    </style>
+    <!-- Great Vibes — script/signature font from Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Great+Vibes&display=swap" rel="stylesheet">
+
+    <!-- Favicon placeholder — replace with actual icons -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-
