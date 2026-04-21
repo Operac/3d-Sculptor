@@ -20,7 +20,7 @@ import { CoinSettings, DEFAULT_SETTINGS, COIN_PRESET, PLAQUE_PRESET, LARGE_PLAQU
 import * as THREE from 'three';
 
 // Use a high-quality placeholder for the default image
-const DEFAULT_IMAGE = "https://picsum.photos/seed/mao-coin/1024/1024"; 
+const DEFAULT_IMAGE = "https://picsum.photos/seed/coin-demo/1024/1024";
 
 export default function App() {
   const [imageSrc, setImageSrc] = useState<string>(DEFAULT_IMAGE);
@@ -91,7 +91,8 @@ export default function App() {
 
   const handleExport = () => {
     if (geometryRef.current) {
-      exportToSTL(geometryRef.current, 'mao_pocket_coin.stl');
+      const label = settings.type === 'plaque' ? 'plaque' : 'coin';
+      exportToSTL(geometryRef.current, `3d_coin_sculptor_${label}.stl`);
     }
   };
 
@@ -773,7 +774,7 @@ function SettingsPanel({
                     </div>
                     <input
                       type="text"
-                      placeholder="e.g. TRANSFORMING MINDS · BUILDING NATIONS"
+                      placeholder="e.g. IN HONOUR OF SERVICE · EST. 2024"
                       value={settings.topText}
                       onChange={(e) => updateSetting('topText', e.target.value)}
                       className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder-neutral-600 focus:outline-none focus:border-blue-500/50 transition-colors"
@@ -789,7 +790,7 @@ function SettingsPanel({
                     </div>
                     <input
                       type="text"
-                      placeholder="e.g. FAITH · NATION · EXCELLENCE"
+                      placeholder="e.g. COURAGE · UNITY · EXCELLENCE"
                       value={settings.bottomText}
                       onChange={(e) => updateSetting('bottomText', e.target.value)}
                       className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder-neutral-600 focus:outline-none focus:border-blue-500/50 transition-colors"
@@ -838,7 +839,7 @@ function SettingsPanel({
                     <p className="text-[9px] text-neutral-600 italic">Trajan has thicker strokes — better for 3D printing &amp; casting.</p>
                     <input
                       type="text"
-                      placeholder="e.g. Poju Oyemade"
+                      placeholder="e.g. Opeyemi Racheal"
                       value={settings.signatureText}
                       onChange={(e) => updateSetting('signatureText', e.target.value)}
                       className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-amber-500/50 transition-colors"
