@@ -37,7 +37,7 @@ _Add your own screenshots here — one of the 3D viewer, one of the settings pan
 
 ## 🚀 Live Demo
 
-> [https://github.com/Operac/3d-coin-sculptor](https://github.com/Operac/3d-coin-sculptor)
+**[https://3d-sculptor.vercel.app](https://3d-sculptor.vercel.app)**
 
 ---
 
