@@ -26,7 +26,12 @@ No CAD knowledge needed. No subscription. Runs entirely in your browser.
 
 ## 🖼️ Screenshots
 
-> _Add your own screenshots here — one of the 3D viewer, one of the settings panel._
+> <img width="498" height="726" alt="preview 3d 6" src="https://github.com/user-attachments/assets/dc040b6e-2e6a-48ee-8290-bd9bc6755081" />
+<img width="582" height="676" alt="preview 3d 1" src="https://github.com/user-attachments/assets/f9b9c8f8-c52a-4c9f-9f4a-47b7b3b0573b" />
+<img width="1850" height="818" alt="preview 3d 2" src="https://github.com/user-attachments/assets/4cec0050-6bbc-497a-8610-4489adb0e8b7" />
+<img width="571" height="718" alt="preview 3d 3" src="https://github.com/user-attachments/assets/7df8196d-a15c-4146-8a41-b0ea02b76c9e" />
+<img width="1850" height="810" alt="preview 3d 5" src="https://github.com/user-attachments/assets/0b5e68be-435f-4fbf-9d56-49b90201ca12" />
+_Add your own screenshots here — one of the 3D viewer, one of the settings panel._
 
 ---
 
