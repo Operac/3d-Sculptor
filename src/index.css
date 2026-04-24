@@ -1,1 +1,28 @@
 @import "tailwindcss";
+
+/* ── Trajan Pro — served from public/fonts/ so it is always available ── */
+@font-face {
+  font-family: "Trajan Pro";
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;   /* block rendering until font is ready — critical for canvas */
+  src: url("/fonts/TrajanPro-Regular.ttf") format("truetype");
+}
+
+@font-face {
+  font-family: "Trajan Pro";
+  font-style: normal;
+  font-weight: 600;
+  font-display: block;
+  src: url("/fonts/TrajanPro-Semibold.otf") format("opentype");
+}
+
+@font-face {
+  font-family: "Trajan Pro";
+  font-style: normal;
+  font-weight: 700;
+  font-display: block;
+  src: url("/fonts/TrajanPro-Bold.ttf") format("truetype");
+}
+
+/* ── Great Vibes — loaded via Google Fonts import in index.html ── */

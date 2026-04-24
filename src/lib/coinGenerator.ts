@@ -437,7 +437,9 @@ export async function generateCoinGeometry(
     const maxArcLen = maxArcAngleRad * textArcR;
 
     // Start at the ideal font size then shrink until text fits within arcSpanDeg.
-    let fontSize = Math.round(Math.min(innerFacePx * 0.10, coinR * 0.08) * textSize);
+    // 0.13 × innerFacePx ≈ 125px on a 39mm coin → 2.38mm physical — legible minimum for 3D print.
+    // (Old: min(0.10×innerFacePx, 0.08×coinR) → 82px = 1.56mm — too small.)
+    let fontSize = Math.round(innerFacePx * 0.13 * textSize);
     const minFontSize = Math.round(coinR * 0.015); // never go below ~1.5% of radius
     let widths: number[] = [];
     let totalW = 0;
@@ -464,8 +466,8 @@ export async function generateCoinGeometry(
     // WHY 0.35: Angular step at text arc with 512 segments ≈ 11px on the depth map.
     // For a stroke to register on at least 2 consecutive mesh vertices (Nyquist),
     // stroke width must be ≥ 2 × angular_step = 22px.
-    // 0.35 × fontSize(82px) = 28.7px → 2.6 vertices per stroke ✓ above Nyquist.
-    // At 0.14 (old value): 11.5px → 0.72 vertices per stroke ✗ aliased away.
+    // 0.35 × fontSize(125px) = 43.75px → 3.9 vertices per stroke ✓ well above Nyquist.
+    // At 0.14 (old value) with old 82px font: 11.5px → 0.72 vertices per stroke ✗ aliased away.
     targetCtx.strokeStyle = `rgb(${g},${g},${g})`;
     targetCtx.lineWidth = fontSize * 0.35;   // must be ≥ 2 × angular mesh step
     targetCtx.lineJoin = 'round';
@@ -506,9 +508,10 @@ export async function generateCoinGeometry(
     targetCtx.restore();
   };
 
-  // Ensure Trajan Pro is loaded before canvas renders — if it's a web font,
-  // the browser needs time to fetch it. Without this, canvas silently falls back
-  // to Times New Roman, which has thinner strokes and different metrics.
+  // Ensure Trajan Pro is loaded before canvas renders.
+  // The @font-face in index.css points to /public/fonts/TrajanPro-*.ttf|otf so
+  // it is always bundled with the app — no network dependency.
+  // font-display: block means the browser will not render until it is ready.
   try {
     const fontWeight = textFont === 'bold' ? '700' : '600';
     await Promise.all([
@@ -516,7 +519,12 @@ export async function generateCoinGeometry(
       document.fonts.load(`700 80px "Trajan Pro"`),
     ]);
   } catch (_) {
-    // Font load timeout — canvas will use closest available serif
+    // Should not happen — font is local. Log for diagnostics.
+    console.warn('⚠️ Trajan Pro font load failed — check public/fonts/ files.');
+  }
+  // Hard check: if Trajan Pro is still not available, warn visibly.
+  if (!document.fonts.check(`700 80px "Trajan Pro"`)) {
+    console.error('❌ Trajan Pro not available in canvas — arc text will use fallback serif.');
   }
 
   // Top arc:    10 o'clock → 2 o'clock  (centred at top = 270°, span = 110°)
@@ -531,12 +539,12 @@ export async function generateCoinGeometry(
   // We work in canvas-pixel space (procRes = 2048) and then compare against the
   // Nyquist limit imposed by the mesh grid (safeGridResolution samples across r).
   //   grid_spacing_px  = procRes / safeGridResolution   (canvas px per mesh vertex)
-  //   fontSize_px      = coinR * 0.08 * textSize        (normal arc font size)
+  //   fontSize_px      = innerFacePx * 0.13 * textSize   (normal arc font size)
   //   stroke_px        = fontSize_px * 0.35             (lineWidth factor in drawArcText)
   //   Minimum safe     = 2 × angular_step_px (angular step at text arc radius)
   //   angular_step_px  = 2π × textArcR / radialSegments
   if ((topText || '').trim().length > 0 || (bottomText || '').trim().length > 0) {
-    const estimatedFontPx  = Math.max(coinR * 0.015, coinR * 0.08 * textSize); // clamp to min font
+    const estimatedFontPx  = Math.max(coinR * 0.015, innerFacePx * 0.13 * textSize); // clamp to min font
     const strokePx         = estimatedFontPx * 0.35;             // lineWidth factor (must be ≥ 2× angular step)
     const angularStepPx    = (2 * Math.PI * textArcR) / segments; // px per angular vertex at text arc
     const gridSpacingPx    = angularStepPx; // re-use variable name for warning message
