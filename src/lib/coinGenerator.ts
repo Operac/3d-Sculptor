@@ -28,6 +28,9 @@ export interface CoinSettings {
   surfaceNoise: number;
   imageOffsetX: number;
   imageOffsetY: number;
+  imageContrast: number;
+  imageBrightness: number;
+  invertImage: boolean;
   topText: string;        // text on top arc (10→2 o'clock)
   topTextSpan: number;    // arc span in degrees for top text (60–330)
   bottomText: string;     // text on bottom arc (7→5 o'clock)
@@ -67,6 +70,9 @@ export const COIN_PRESET: CoinSettings = {
   surfaceNoise: 0.0,     // resin: off — resin captures real surface texture
   imageOffsetX: 0,
   imageOffsetY: 0,
+  imageContrast: 1.0,
+  imageBrightness: 0.0,
+  invertImage: false,
   topText: '',
   topTextSpan: 200,
   bottomText: '',
@@ -111,6 +117,9 @@ export const PLAQUE_PRESET: CoinSettings = {
   surfaceNoise: 0.0,
   imageOffsetX: 0,
   imageOffsetY: 0,
+  imageContrast: 1.0,
+  imageBrightness: 0.0,
+  invertImage: false,
   topText: '',
   topTextSpan: 160,
   bottomText: '',
@@ -155,6 +164,9 @@ export const LARGE_PLAQUE_PRESET: CoinSettings = {
   surfaceNoise: 0.0,
   imageOffsetX: 0,
   imageOffsetY: 0,
+  imageContrast: 1.0,
+  imageBrightness: 0.0,
+  invertImage: false,
   topText: '',
   topTextSpan: 160,
   bottomText: '',
@@ -199,6 +211,9 @@ export const POCKET_2_PRESET: CoinSettings = {
   surfaceNoise: 0.0,     // resin: off
   imageOffsetX: 0,
   imageOffsetY: 0,
+  imageContrast: 1.0,
+  imageBrightness: 0.0,
+  invertImage: false,
   topText: '',
   topTextSpan: 200,
   bottomText: '',
@@ -249,6 +264,9 @@ export async function generateCoinGeometry(
     surfaceNoise,
     imageOffsetX = 0,
     imageOffsetY = 0,
+    imageContrast = 1.0,
+    imageBrightness = 0.0,
+    invertImage = false,
     topText = '',
     topTextSpan = 200,
     bottomText = '',
@@ -577,11 +595,37 @@ export async function generateCoinGeometry(
     ctx2x.restore();
   }
 
-  // Downscale 2x text layer back onto main canvas at procRes
+  // ── Text mask: capture text layer BEFORE compositing onto portrait ────────
+  // Purpose: text pixels baked into origScaledData often become indistinguishable
+  // from a bright portrait background (both read high luminance → same depth).
+  // Solution: record the PURE text pixels here, then force their depth into the
+  // depth map post-blend — guaranteeing text is always at its target depth.
+  const textLayerCanvas = document.createElement('canvas');
+  textLayerCanvas.width  = procRes;
+  textLayerCanvas.height = procRes;
+  const textLayerCtx = textLayerCanvas.getContext('2d')!;
+  textLayerCtx.imageSmoothingEnabled = true;
+  textLayerCtx.imageSmoothingQuality = 'high';
+  // Downscale 4096→2048 for the text-only layer (Lanczos antialiasing)
+  textLayerCtx.drawImage(textCanvas2x, 0, 0, procRes * 2, procRes * 2, 0, 0, procRes, procRes);
+  const textLayerRaw = textLayerCtx.getImageData(0, 0, procRes, procRes).data;
+
+  // Build float mask: 0 = no text, >0 = normalised target depth for that pixel
+  const textDepthTarget = Math.min(1.0, textDepthMm / Math.max(0.1, maxRelief));
+  const textMask = new Float32Array(procRes * procRes);
+  for (let ti = 0; ti < procRes * procRes; ti++) {
+    const tLum = (0.299 * textLayerRaw[ti * 4] + 0.587 * textLayerRaw[ti * 4 + 1] + 0.114 * textLayerRaw[ti * 4 + 2]) / 255;
+    if (tLum > 0.08) textMask[ti] = tLum * textDepthTarget; // proportional text depth
+  }
+
+  // Composite antialiased text layer onto portrait using 'lighten' so portrait
+  // bright areas are never darkened by the text layer background (transparent).
   ctx.save();
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(textCanvas2x, 0, 0, procRes * 2, procRes * 2, 0, 0, procRes, procRes);
+  ctx.globalCompositeOperation = 'lighten'; // take max of portrait and text brightness
+  ctx.drawImage(textLayerCanvas, 0, 0);     // already at procRes — no scaling needed
+  ctx.globalCompositeOperation = 'source-over';
   ctx.restore();
   // ──────────────────────────────────────────────────────────────────────────
 
@@ -726,6 +770,11 @@ export async function generateCoinGeometry(
     return n00*(1-tx)*(1-ty) + n10*tx*(1-ty) + n01*(1-tx)*ty + n11*tx*ty;
   };
 
+  // Auto-fix #1: if AI depth is near-uniform (model saw no depth variation),
+  // shift weight toward luminance so the portrait tones still drive the relief.
+  const aiWeight  = relativeRange < 0.10 ? 0.15 : 0.40;
+  const lumWeight = 1.0 - aiWeight;
+
   let depthMap = new Float32Array(procRes * procRes);
   let minDepth = 1, maxDepth = 0;
 
@@ -737,67 +786,136 @@ export async function generateCoinGeometry(
       // Float32 AI depth — no uint8 quantisation
       const aiDepthVal = sampleAIFloat(u, v);
 
-      // Luminance from original 8-bit portrait image (portrait photos are 8-bit
-      // natively — no information lost going through canvas RGBA here).
+      // Luminance from original 8-bit portrait image
       const idx = (i * procRes + j) * 4;
       const r = origScaledData[idx];
       const g = origScaledData[idx + 1];
       const b = origScaledData[idx + 2];
-      const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+      let luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
 
-      // HYBRID BLEND: AI global form (40%) + luminance surface detail / text (60%)
-      const depthVal = aiDepthVal * 0.4 + luminance * 0.6;
+      // Apply user image adjustments
+      if (settings.invertImage) {
+        luminance = 1.0 - luminance;
+      }
+      luminance = (luminance - 0.5) * settings.imageContrast + 0.5 + settings.imageBrightness;
+      luminance = Math.max(0, Math.min(1, luminance));
+
+      // HYBRID BLEND: AI global 3-D form + luminance surface detail / text
+      const depthVal = aiDepthVal * aiWeight + luminance * lumWeight;
       depthMap[i * procRes + j] = depthVal;
       if (depthVal < minDepth) minDepth = depthVal;
       if (depthVal > maxDepth) maxDepth = depthVal;
     }
   }
 
+  // ── Text mask override ────────────────────────────────────────────────────
+  // Guarantees text pixels always reach their target depth regardless of whether
+  // the portrait background behind the text is bright (which would hide the text).
+  for (let ti = 0; ti < depthMap.length; ti++) {
+    if (textMask[ti] > depthMap[ti]) {
+      depthMap[ti] = textMask[ti];
+      if (textMask[ti] > maxDepth) maxDepth = textMask[ti];
+    }
+  }
+
   if (maxDepth - minDepth < 0.2) {
-    warnings.push("⚠️ Low contrast detected: Image lacks distinct light and dark areas. Relief may be flat.");
+    warnings.push("⚠️ Low contrast — image lacks distinct light/dark areas. Relief may be flat. " +
+      "[Auto-fix: luminance weight boosted to " + Math.round(lumWeight * 100) + "%]");
   }
 
   // Clean up: zero out very small depth values to ensure truly flat areas
-  // This prevents noise from being applied to flat regions
-  const noiseThreshold = 0.02; // Only consider values above this as having actual relief
+  const noiseThreshold = 0.02;
   for (let i = 0; i < depthMap.length; i++) {
-    if (depthMap[i] < noiseThreshold) {
-      depthMap[i] = 0;
-    }
+    if (depthMap[i] < noiseThreshold) depthMap[i] = 0;
   }
 
-  // Light denoising only - preserve detail by reducing filter passes
-  const initialDenoise = new Float32Array(procRes * procRes);
-  let totalNoise = 0;
-  for (let y = 1; y < procRes - 1; y++) {
-    for (let x = 1; x < procRes - 1; x++) {
-      let sum = 0;
-      for (let ky = -1; ky <= 1; ky++) {
-        for (let kx = -1; kx <= 1; kx++) {
-          sum += depthMap[(y + ky) * procRes + (x + kx)];
+  // ── Surface smoothing — 5×5 Gaussian (sigma = 1.5) ───────────────────────
+  // The old 3×3 box blur was too weak: AI depth model noise + high-frequency
+  // portrait luminance texture both survived into the mesh, producing the
+  // "shaky" / stripe-pattern surface visible in Bambu preview.
+  // A 5×5 Gaussian (σ=1.5) suppresses sub-pixel noise while preserving the
+  // broad portrait relief and all text strokes (which are many pixels wide).
+  // Text strokes are restored by the textMask override applied after this.
+  {
+    const gSigma = 1.5, gR = 2; // radius=2 → 5×5 kernel
+    const gKernel: number[] = [];
+    let gKSum = 0;
+    for (let ky = -gR; ky <= gR; ky++) {
+      for (let kx = -gR; kx <= gR; kx++) {
+        const w = Math.exp(-(kx * kx + ky * ky) / (2 * gSigma * gSigma));
+        gKernel.push(w); gKSum += w;
+      }
+    }
+    for (let i = 0; i < gKernel.length; i++) gKernel[i] /= gKSum;
+
+    const smoothed = new Float32Array(depthMap.length);
+    let totalNoise = 0;
+    for (let y = gR; y < procRes - gR; y++) {
+      for (let x = gR; x < procRes - gR; x++) {
+        const orig = depthMap[y * procRes + x];
+        let s = 0, ki = 0;
+        for (let ky = -gR; ky <= gR; ky++) {
+          for (let kx = -gR; kx <= gR; kx++) {
+            s += depthMap[(y + ky) * procRes + (x + kx)] * gKernel[ki++];
+          }
+        }
+        smoothed[y * procRes + x] = s;
+        totalNoise += Math.abs(orig - s);
+      }
+    }
+    // Edge rows/cols: copy original
+    for (let x = 0; x < procRes; x++) {
+      for (let r = 0; r < gR; r++) {
+        smoothed[r * procRes + x]                 = depthMap[r * procRes + x];
+        smoothed[(procRes - 1 - r) * procRes + x] = depthMap[(procRes - 1 - r) * procRes + x];
+      }
+    }
+    for (let y = 0; y < procRes; y++) {
+      for (let r = 0; r < gR; r++) {
+        smoothed[y * procRes + r]                 = depthMap[y * procRes + r];
+        smoothed[y * procRes + (procRes - 1 - r)] = depthMap[y * procRes + (procRes - 1 - r)];
+      }
+    }
+
+    const noiseLevel = totalNoise / ((procRes - 2 * gR) * (procRes - 2 * gR));
+    if (noiseLevel > 0.04) {
+      // Auto-fix: apply a second smoothing pass for very noisy images
+      const smoothed2 = new Float32Array(depthMap.length);
+      for (let y = gR; y < procRes - gR; y++) {
+        for (let x = gR; x < procRes - gR; x++) {
+          let s = 0, ki = 0;
+          for (let ky = -gR; ky <= gR; ky++) {
+            for (let kx = -gR; kx <= gR; kx++) {
+              s += smoothed[(y + ky) * procRes + (x + kx)] * gKernel[ki++];
+            }
+          }
+          smoothed2[y * procRes + x] = s;
         }
       }
-      const avg = sum / 9;
-      initialDenoise[y * procRes + x] = avg;
-      totalNoise += Math.abs(depthMap[y * procRes + x] - avg);
+      for (let x = 0; x < procRes; x++) {
+        for (let r = 0; r < gR; r++) {
+          smoothed2[r * procRes + x]                 = smoothed[r * procRes + x];
+          smoothed2[(procRes - 1 - r) * procRes + x] = smoothed[(procRes - 1 - r) * procRes + x];
+        }
+      }
+      for (let y = 0; y < procRes; y++) {
+        for (let r = 0; r < gR; r++) {
+          smoothed2[y * procRes + r]                 = smoothed[y * procRes + r];
+          smoothed2[y * procRes + (procRes - 1 - r)] = smoothed[y * procRes + (procRes - 1 - r)];
+        }
+      }
+      depthMap.set(smoothed2);
+      warnings.push("⚠️ High image noise detected — auto-applied double smoothing pass to reduce surface roughness.");
+    } else {
+      depthMap.set(smoothed);
     }
   }
-  // Copy edge pixels
-  for (let x = 0; x < procRes; x++) {
-    initialDenoise[x] = depthMap[x];
-    initialDenoise[(procRes - 1) * procRes + x] = depthMap[(procRes - 1) * procRes + x];
-  }
-  for (let y = 0; y < procRes; y++) {
-    initialDenoise[y * procRes] = depthMap[y * procRes];
-    initialDenoise[y * procRes + procRes - 1] = depthMap[y * procRes + procRes - 1];
-  }
-  
-  const noiseLevel = totalNoise / ((procRes - 2) * (procRes - 2));
-  if (noiseLevel > 0.04) {
-    warnings.push("⚠️ High noise detected: Uploaded image is very noisy/grainy. 3D surface may be jagged.");
-  }
 
-  depthMap.set(initialDenoise);
+  // Re-apply text mask after smoothing — the Gaussian blur softens text stroke
+  // edges; restore them to their exact target depth so letters stay crisp.
+  for (let ti = 0; ti < depthMap.length; ti++) {
+    if (textMask[ti] > depthMap[ti]) depthMap[ti] = textMask[ti];
+  }
 
   // Skip median filters entirely - they soften edges and blur detail
 
@@ -905,6 +1023,51 @@ export async function generateCoinGeometry(
       const dist = Math.sqrt(dx*dx + dy*dy);
       if (dist > maxRadius) {
         depthMap[y * procRes + x] = 0;
+      }
+    }
+  }
+
+  // ── Quality Check #16: Z-fighting lift ───────────────────────────────────
+  // Text transition pixels at depth values just barely above field-Z create a
+  // near-coincident surface with the coin base, producing Z-flicker in Bambu
+  // preview at letter edges.  Lift any non-zero value below the 0.01mm threshold
+  // to exactly that minimum so every "text" pixel is clearly above field level.
+  {
+    const minLiftNorm = Math.min(0.05, 0.01 / Math.max(0.1, maxRelief));
+    for (let i = 0; i < depthMap.length; i++) {
+      if (depthMap[i] > 0 && depthMap[i] < minLiftNorm) {
+        depthMap[i] = minLiftNorm;
+      }
+    }
+  }
+
+  // ── Quality Check #20: Field flatness ────────────────────────────────────
+  // Sample the annular zone between portrait (65% r) and text arc (90% r).
+  // This "field" should be nearly flat — high variance means portrait background
+  // spills into the field, which will reduce text shadow contrast on the print.
+  {
+    const fieldRmin = 0.65, fieldRmax = 0.90;
+    const sampleStep = Math.max(1, Math.floor(procRes / 200));
+    const fieldSamples: number[] = [];
+    for (let fy = 0; fy < procRes; fy += sampleStep) {
+      for (let fx = 0; fx < procRes; fx += sampleStep) {
+        const fdx = fx - centerX, fdy = fy - centerY;
+        const fr = Math.sqrt(fdx * fdx + fdy * fdy) / maxRadius;
+        if (fr >= fieldRmin && fr <= fieldRmax) fieldSamples.push(depthMap[fy * procRes + fx]);
+      }
+    }
+    if (fieldSamples.length > 10) {
+      const fMean = fieldSamples.reduce((a, b) => a + b, 0) / fieldSamples.length;
+      const fVar  = fieldSamples.reduce((s, v) => s + (v - fMean) ** 2, 0) / fieldSamples.length;
+      const fStdMm = Math.sqrt(fVar) * maxRelief;
+      if (fStdMm > 0.1) {
+        warnings.push(
+          `⚠️ Field flatness variance ${fStdMm.toFixed(3)} mm — field zone is not flat ` +
+          `(target < 0.1mm). Text shadow contrast will be reduced on the printed coin. ` +
+          `Use a portrait with a dark/neutral background for a cleaner field.`
+        );
+      } else {
+        console.info(`✅ QC field flatness: σ = ${fStdMm.toFixed(3)} mm`);
       }
     }
   }

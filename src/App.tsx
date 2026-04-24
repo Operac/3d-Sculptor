@@ -938,6 +938,38 @@ function SettingsPanel({
                 </div>
 
                 <div className="space-y-3 p-4 bg-white/5 rounded-xl border border-white/10">
+                  <span className="text-[10px] font-bold uppercase text-neutral-400 tracking-wider block">Image Tuning</span>
+                  
+                  <div className="flex items-center justify-between">
+                    <label className="text-[11px] text-neutral-400 font-medium uppercase tracking-wider">Invert Image</label>
+                    <button
+                      onClick={() => updateSetting('invertImage', !settings.invertImage)}
+                      className={`w-10 h-5 rounded-full transition-colors relative ${settings.invertImage ? 'bg-blue-500' : 'bg-neutral-700'}`}
+                    >
+                      <div className={`absolute top-1 w-3 h-3 rounded-full bg-white transition-all ${settings.invertImage ? 'left-6' : 'left-1'}`} />
+                    </button>
+                  </div>
+                  
+                  <SettingSlider
+                    label="Contrast"
+                    value={settings.imageContrast}
+                    min={0.1} max={3.0} step={0.1}
+                    onChange={(v) => updateSetting('imageContrast', v)}
+                  />
+
+                  <SettingSlider
+                    label="Brightness"
+                    value={settings.imageBrightness}
+                    min={-1.0} max={1.0} step={0.05}
+                    onChange={(v) => updateSetting('imageBrightness', v)}
+                  />
+                  
+                  <p className="text-[9px] text-neutral-600 leading-tight italic">
+                    Use these to fix faint text or inverted colors (e.g. text going inwards instead of outwards).
+                  </p>
+                </div>
+
+                <div className="space-y-3 p-4 bg-white/5 rounded-xl border border-white/10">
                   <span className="text-[10px] font-bold uppercase text-neutral-400 tracking-wider block">Image Position</span>
 
                   {/* Horizontal slider */}
