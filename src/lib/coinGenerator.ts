@@ -63,7 +63,7 @@ export const COIN_PRESET: CoinSettings = {
   rimHeight: 0.8,
   fieldRecess: 0.3,
   maxRelief: 1.5,        // resin: deeper relief for crisp detail
-  segments: 128,
+  segments: 360,         // 1° per segment — smooth circle, ~18 MB STL (well under 800k face limit)
   gridResolution: 512,   // resin: max resolution for sharp text & portrait
   isDoubleFaced: true,
   showRim: true,
@@ -110,7 +110,7 @@ export const PLAQUE_PRESET: CoinSettings = {
   rimHeight: 2.5,
   fieldRecess: 0.0,
   maxRelief: 4.0,
-  segments: 256,
+  segments: 512,         // smooth circle for 150mm plaque, ~17 MB STL
   gridResolution: 768,   // Bambu: max resolution for plaque portrait sharpness
   isDoubleFaced: false,
   showRim: true,
@@ -157,7 +157,7 @@ export const LARGE_PLAQUE_PRESET: CoinSettings = {
   rimHeight: 4.0,
   fieldRecess: 0.0,
   maxRelief: 8.0,
-  segments: 256,
+  segments: 512,         // smooth 425mm circle, capped by face budget if needed
   gridResolution: 768,   // Bambu: maximum for large plaque
   isDoubleFaced: false,
   showRim: true,
@@ -204,7 +204,7 @@ export const POCKET_2_PRESET: CoinSettings = {
   rimHeight: 0.8,
   fieldRecess: 0.0,
   maxRelief: 1.5,        // resin: deeper for sharper portrait detail
-  segments: 128,
+  segments: 360,         // 1° per segment — smooth coin edge
   gridResolution: 512,
   isDoubleFaced: true,
   showRim: true,
