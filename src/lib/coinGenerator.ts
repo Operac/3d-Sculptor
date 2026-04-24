@@ -63,7 +63,7 @@ export const COIN_PRESET: CoinSettings = {
   rimHeight: 0.8,
   fieldRecess: 0.3,
   maxRelief: 1.5,        // resin: deeper relief for crisp detail
-  segments: 360,         // 1° per segment — smooth circle, ~18 MB STL (well under 800k face limit)
+  segments: 512,         // 512 segments → angular step 11px → text strokes 2.2× Nyquist
   gridResolution: 768,   // 768 → mesh samples depth every 2.7px → text strokes ≥ 3 vertices wide
   isDoubleFaced: true,
   showRim: true,
@@ -204,7 +204,7 @@ export const POCKET_2_PRESET: CoinSettings = {
   rimHeight: 0.8,
   fieldRecess: 0.0,
   maxRelief: 1.5,        // resin: deeper for sharper portrait detail
-  segments: 360,         // 1° per segment — smooth coin edge
+  segments: 512,         // 512 segments — matches COIN_PRESET for crisp text capture
   gridResolution: 768,   // matches COIN_PRESET — 2.7px mesh sampling for crisp text
   isDoubleFaced: true,
   showRim: true,
@@ -459,12 +459,17 @@ export async function generateCoinGeometry(
     targetCtx.font = `${weight} ${fontSize}px "Trajan Pro", serif`;
     targetCtx.textAlign = 'center';
     targetCtx.textBaseline = 'middle';
-    // Stroke same color as fill so it THICKENS the letters rather than outlining
-    // them in dark (which creates a moat effect making thin strokes look broken).
-    // 0.14× gives strokes ≥ 3 mesh vertices wide at grid=768 — safely above Nyquist.
+    // Stroke same color as fill — thickens letters without outlining them in dark.
+    //
+    // WHY 0.35: Angular step at text arc with 512 segments ≈ 11px on the depth map.
+    // For a stroke to register on at least 2 consecutive mesh vertices (Nyquist),
+    // stroke width must be ≥ 2 × angular_step = 22px.
+    // 0.35 × fontSize(82px) = 28.7px → 2.6 vertices per stroke ✓ above Nyquist.
+    // At 0.14 (old value): 11.5px → 0.72 vertices per stroke ✗ aliased away.
     targetCtx.strokeStyle = `rgb(${g},${g},${g})`;
-    targetCtx.lineWidth = fontSize * 0.14;   // thicker than 0.09 — survives mesh grid sampling
+    targetCtx.lineWidth = fontSize * 0.35;   // must be ≥ 2 × angular mesh step
     targetCtx.lineJoin = 'round';
+    targetCtx.lineCap  = 'round';
     targetCtx.fillStyle = `rgb(${g},${g},${g})`;
 
     // Distribute characters evenly across the arc span
@@ -501,6 +506,19 @@ export async function generateCoinGeometry(
     targetCtx.restore();
   };
 
+  // Ensure Trajan Pro is loaded before canvas renders — if it's a web font,
+  // the browser needs time to fetch it. Without this, canvas silently falls back
+  // to Times New Roman, which has thinner strokes and different metrics.
+  try {
+    const fontWeight = textFont === 'bold' ? '700' : '600';
+    await Promise.all([
+      document.fonts.load(`${fontWeight} 80px "Trajan Pro"`),
+      document.fonts.load(`700 80px "Trajan Pro"`),
+    ]);
+  } catch (_) {
+    // Font load timeout — canvas will use closest available serif
+  }
+
   // Top arc:    10 o'clock → 2 o'clock  (centred at top = 270°, span = 110°)
   // Bottom arc: 7 o'clock  → 5 o'clock  (centred at bottom = 90°, span = 60°)
   drawArcText(topText,    270, topTextSpan,    false, ctx2x); // top arc
@@ -514,12 +532,14 @@ export async function generateCoinGeometry(
   // Nyquist limit imposed by the mesh grid (safeGridResolution samples across r).
   //   grid_spacing_px  = procRes / safeGridResolution   (canvas px per mesh vertex)
   //   fontSize_px      = coinR * 0.08 * textSize        (normal arc font size)
-  //   stroke_px        = fontSize_px * 0.09             (lineWidth factor in drawArcText)
-  //   Minimum safe     = 2 × grid_spacing_px
+  //   stroke_px        = fontSize_px * 0.35             (lineWidth factor in drawArcText)
+  //   Minimum safe     = 2 × angular_step_px (angular step at text arc radius)
+  //   angular_step_px  = 2π × textArcR / radialSegments
   if ((topText || '').trim().length > 0 || (bottomText || '').trim().length > 0) {
-    const gridSpacingPx  = procRes / safeGridResolution;         // px per mesh vertex on depth map
-    const estimatedFontPx = Math.max(coinR * 0.015, coinR * 0.08 * textSize); // clamp to min font
-    const strokePx        = estimatedFontPx * 0.09;              // lineWidth factor
+    const estimatedFontPx  = Math.max(coinR * 0.015, coinR * 0.08 * textSize); // clamp to min font
+    const strokePx         = estimatedFontPx * 0.35;             // lineWidth factor (must be ≥ 2× angular step)
+    const angularStepPx    = (2 * Math.PI * textArcR) / segments; // px per angular vertex at text arc
+    const gridSpacingPx    = angularStepPx; // re-use variable name for warning message
     if (strokePx < 2 * gridSpacingPx) {
       const strokeMm  = strokePx  * (diameter / procRes);
       const spacingMm = gridSpacingPx * (diameter / procRes);
@@ -809,6 +829,49 @@ export async function generateCoinGeometry(
     }
   }
 
+  // ── Portrait background leveling ─────────────────────────────────────────
+  // Problem: luminance maps the ENTIRE photo to depth — clothing, background,
+  // surrounding wall all become raised "domes" even though they're flat on a
+  // real coin. The portrait zone pushes up uniformly like a bubble.
+  //
+  // Fix: sample the outer ring of the portrait zone (r = 0.50–0.62) to find
+  // the "background" depth level (25th percentile, representing flat areas like
+  // suit, shirt, background wall). Subtract that from the whole portrait zone
+  // so the background flattens to ~0 while the face/hair relief is preserved.
+  // This matches how a coin engraver works: cut the background to field level,
+  // leaving only the subject raised.
+  {
+    const bgSamples: number[] = [];
+    const bgStep = Math.max(1, Math.floor(procRes / 150));
+    for (let sy = 0; sy < procRes; sy += bgStep) {
+      for (let sx = 0; sx < procRes; sx += bgStep) {
+        const dx = (sx - coinR) / coinR;
+        const dy = (sy - coinR) / coinR;
+        const br = Math.sqrt(dx * dx + dy * dy);
+        if (br >= 0.50 && br <= 0.62) bgSamples.push(depthMap[sy * procRes + sx]);
+      }
+    }
+    if (bgSamples.length > 10) {
+      bgSamples.sort((a, b) => a - b);
+      // 25th percentile: robust estimate of the flat background level
+      const bgLevel = bgSamples[Math.floor(bgSamples.length * 0.25)];
+      if (bgLevel > 0.05) { // only level if background is meaningfully raised
+        for (let i = 0; i < procRes; i++) {
+          for (let j = 0; j < procRes; j++) {
+            const dx = (j - coinR) / coinR;
+            const dy = (i - coinR) / coinR;
+            const pr = Math.sqrt(dx * dx + dy * dy);
+            if (pr < 0.68) { // portrait zone only
+              const ti = i * procRes + j;
+              depthMap[ti] = Math.max(0, depthMap[ti] - bgLevel);
+            }
+          }
+        }
+        console.info(`✅ Portrait background leveled — subtracted bg depth ${bgLevel.toFixed(3)}`);
+      }
+    }
+  }
+
   // ── Text mask override ────────────────────────────────────────────────────
   // Guarantees text pixels always reach their target depth regardless of whether
   // the portrait background behind the text is bright (which would hide the text).
@@ -930,8 +993,8 @@ export async function generateCoinGeometry(
   // The medallionRing and arcText are NOT applied here; they're restored via
   // the final textMask pass after all normalizations (see below).
   {
-    const fadeStart = 0.60; // portrait keeps full depth inside here
-    const fadeEnd   = 0.72; // portrait is fully faded by here
+    const fadeStart = 0.55; // portrait keeps full depth inside here
+    const fadeEnd   = 0.70; // portrait is fully faded by here (tighter = less dome edge)
     for (let i = 0; i < procRes; i++) {
       for (let j = 0; j < procRes; j++) {
         const dx = (j - coinR) / coinR;
