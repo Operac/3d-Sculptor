@@ -819,24 +819,24 @@ function SettingsPanel({
                       <span className="text-[9px] text-neutral-500 uppercase tracking-wider w-20 shrink-0">Signature</span>
                       <span className="text-[9px] text-neutral-600">centred below portrait · optional</span>
                     </div>
-                    {/* Font picker */}
+                    {/* Signature Font picker */}
+                    <p className="text-[9px] text-neutral-500 font-semibold uppercase tracking-wider mt-1">Font Style</p>
                     <div className="grid grid-cols-2 gap-1.5">
                       <button
                         onClick={() => updateSetting('signatureFont', 'great-vibes')}
-                        className={`py-1.5 px-2 rounded-lg border text-[11px] transition-all ${settings.signatureFont === 'great-vibes' ? 'bg-amber-500/20 border-amber-500 text-white' : 'bg-white/5 border-white/5 text-neutral-400 hover:bg-white/10'}`}
-                        style={{ fontFamily: '"Great Vibes", cursive', fontSize: '14px' }}
+                        className={`py-2 px-2 rounded-lg border flex flex-col items-center gap-0.5 transition-all ${settings.signatureFont === 'great-vibes' ? 'bg-amber-500/20 border-amber-500 text-white' : 'bg-white/5 border-white/5 text-neutral-400 hover:bg-white/10'}`}
                       >
-                        Cursive
+                        <span style={{ fontFamily: '"Great Vibes", cursive', fontSize: '16px' }}>Cursive</span>
+                        <span className="text-[8px] opacity-60 normal-case">Great Vibes script</span>
                       </button>
                       <button
                         onClick={() => updateSetting('signatureFont', 'trajan')}
-                        className={`py-1.5 px-2 rounded-lg border text-[10px] font-bold uppercase tracking-wider transition-all ${settings.signatureFont === 'trajan' ? 'bg-amber-500/20 border-amber-500 text-white' : 'bg-white/5 border-white/5 text-neutral-400 hover:bg-white/10'}`}
-                        style={{ fontFamily: '"Trajan Pro", serif' }}
+                        className={`py-2 px-2 rounded-lg border flex flex-col items-center gap-0.5 transition-all ${settings.signatureFont === 'trajan' ? 'bg-amber-500/20 border-amber-500 text-white' : 'bg-white/5 border-white/5 text-neutral-400 hover:bg-white/10'}`}
                       >
-                        Trajan
+                        <span style={{ fontFamily: '"Trajan Pro", serif', fontSize: '12px', fontWeight: 700 }} className="uppercase tracking-wider">Trajan Pro</span>
+                        <span className="text-[8px] opacity-60 normal-case">Best for 3D printing</span>
                       </button>
                     </div>
-                    <p className="text-[9px] text-neutral-600 italic">Trajan has thicker strokes — better for 3D printing &amp; casting.</p>
                     <input
                       type="text"
                       placeholder="e.g. Opeyemi Racheal"

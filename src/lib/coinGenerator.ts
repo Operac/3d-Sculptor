@@ -60,7 +60,7 @@ export const COIN_PRESET: CoinSettings = {
   fieldRecess: 0.4,
   maxRelief: 1.0,
   segments: 128,
-  gridResolution: 256,
+  gridResolution: 384,
   isDoubleFaced: true,
   showRim: true,
   surfaceNoise: 0.05,
@@ -104,7 +104,7 @@ export const PLAQUE_PRESET: CoinSettings = {
   fieldRecess: 0.0,
   maxRelief: 3.0,
   segments: 256,
-  gridResolution: 256,
+  gridResolution: 512,
   isDoubleFaced: false,
   showRim: true,
   surfaceNoise: 0.1,
@@ -148,7 +148,7 @@ export const LARGE_PLAQUE_PRESET: CoinSettings = {
   fieldRecess: 0.0,
   maxRelief: 6.0,
   segments: 256,
-  gridResolution: 256,
+  gridResolution: 512,
   isDoubleFaced: false,
   showRim: true,
   surfaceNoise: 0.15,
@@ -192,7 +192,7 @@ export const POCKET_2_PRESET: CoinSettings = {
   fieldRecess: 0.0,
   maxRelief: 1.0,
   segments: 128,
-  gridResolution: 256,
+  gridResolution: 384,
   isDoubleFaced: true,
   showRim: true,
   surfaceNoise: 0.05,
@@ -265,8 +265,9 @@ export async function generateCoinGeometry(
     medallionRingDepthMm = 1.5,
   } = settings;
 
-  // Limit gridResolution to prevent excessive memory usage and stack overflow
-  const safeGridResolution = Math.min(gridResolution, 256);
+  // Cap grid resolution — higher = sharper text & detail, but more memory.
+  // 512 gives 4× more samples than 256 and is well within browser limits.
+  const safeGridResolution = Math.min(gridResolution, 512);
 
   const radius = diameter / 2;
   const innerRadius = showRim ? radius - rimWidth : radius;
