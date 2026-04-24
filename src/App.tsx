@@ -84,15 +84,17 @@ export default function App() {
 
   const resetSettings = () => {
     if (settings.diameter === 425) setSettings(LARGE_PLAQUE_PRESET);
-    else if (settings.diameter === 39 && settings.baseHeight === 1.2) setSettings(POCKET_2_PRESET);
+    else if (settings.diameter === 39 && settings.baseHeight === 1.5) setSettings(POCKET_2_PRESET);
     else if (settings.type === 'coin') setSettings(COIN_PRESET);
     else setSettings(PLAQUE_PRESET);
   };
 
+  const [tiltForBambu, setTiltForBambu] = useState(false);
+
   const handleExport = () => {
     if (geometryRef.current) {
       const label = settings.type === 'plaque' ? 'plaque' : 'coin';
-      exportToSTL(geometryRef.current, `3d_coin_sculptor_${label}.stl`);
+      exportToSTL(geometryRef.current, `3d_coin_sculptor_${label}.stl`, tiltForBambu ? 15 : 0);
     }
   };
 
@@ -121,6 +123,15 @@ export default function App() {
             >
               <Upload className="w-3.5 h-3.5" />
               <span className="hidden sm:inline font-medium">Upload Image</span>
+            </button>
+            {/* Bambu tilt toggle */}
+            <button
+              onClick={() => setTiltForBambu(v => !v)}
+              title="Pre-tilt 15° for Bambu — better layer lines, less FEP suction"
+              className={`hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-lg border text-[10px] font-bold uppercase tracking-wider transition-all ${tiltForBambu ? 'bg-blue-500/20 border-blue-500/60 text-blue-300' : 'bg-white/[0.03] border-white/[0.06] text-neutral-500 hover:border-white/20 hover:text-neutral-300'}`}
+            >
+              <span>⟳</span>
+              <span>15° Tilt</span>
             </button>
             <button
               onClick={handleExport}
@@ -975,7 +986,7 @@ function SettingsPanel({
                 <SettingSlider
                   label="Resolution"
                   value={settings.gridResolution}
-                  min={64} max={256} step={32}
+                  min={512} max={768} step={128}
                   onChange={(v) => updateSetting('gridResolution', v)}
                 />
               </div>

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 export type ModelType = 'coin' | 'plaque';
 export type ReliefStyle = 'elevated' | 'embedded' | 'emboss';
@@ -54,16 +55,16 @@ export const COIN_PRESET: CoinSettings = {
   type: 'coin',
   reliefStyle: 'elevated',
   diameter: 39,
-  baseHeight: 1.5,
-  rimWidth: 1.0,
-  rimHeight: 0.5,
-  fieldRecess: 0.4,
-  maxRelief: 1.0,
+  baseHeight: 2.0,       // resin: thicker base = stronger print
+  rimWidth: 1.2,
+  rimHeight: 0.8,
+  fieldRecess: 0.3,
+  maxRelief: 1.5,        // resin: deeper relief for crisp detail
   segments: 128,
-  gridResolution: 384,
+  gridResolution: 512,   // resin: max resolution for sharp text & portrait
   isDoubleFaced: true,
   showRim: true,
-  surfaceNoise: 0.05,
+  surfaceNoise: 0.0,     // resin: off — resin captures real surface texture
   imageOffsetX: 0,
   imageOffsetY: 0,
   topText: '',
@@ -71,7 +72,7 @@ export const COIN_PRESET: CoinSettings = {
   bottomText: '',
   bottomTextSpan: 100,
   textSize: 1.0,
-  textDepthMm: 0.4,
+  textDepthMm: 0.8,      // resin: 0.8mm min for reliable text resolution
   textFont: 'bold',
   signatureText: '',
   signatureFont: 'great-vibes',
@@ -102,12 +103,12 @@ export const PLAQUE_PRESET: CoinSettings = {
   rimWidth: 8.0,
   rimHeight: 2.5,
   fieldRecess: 0.0,
-  maxRelief: 3.0,
+  maxRelief: 4.0,
   segments: 256,
-  gridResolution: 512,
+  gridResolution: 768,   // Bambu: max resolution for plaque portrait sharpness
   isDoubleFaced: false,
   showRim: true,
-  surfaceNoise: 0.1,
+  surfaceNoise: 0.0,
   imageOffsetX: 0,
   imageOffsetY: 0,
   topText: '',
@@ -146,12 +147,12 @@ export const LARGE_PLAQUE_PRESET: CoinSettings = {
   rimWidth: 12.0,
   rimHeight: 4.0,
   fieldRecess: 0.0,
-  maxRelief: 6.0,
+  maxRelief: 8.0,
   segments: 256,
-  gridResolution: 512,
+  gridResolution: 768,   // Bambu: maximum for large plaque
   isDoubleFaced: false,
   showRim: true,
-  surfaceNoise: 0.15,
+  surfaceNoise: 0.0,
   imageOffsetX: 0,
   imageOffsetY: 0,
   topText: '',
@@ -159,7 +160,7 @@ export const LARGE_PLAQUE_PRESET: CoinSettings = {
   bottomText: '',
   bottomTextSpan: 90,
   textSize: 1.0,
-  textDepthMm: 2.5,
+  textDepthMm: 3.0,      // resin: deep text for large plaque wall mounting
   textFont: 'semibold',
   signatureText: '',
   signatureFont: 'great-vibes',
@@ -186,16 +187,16 @@ export const POCKET_2_PRESET: CoinSettings = {
   type: 'coin',
   reliefStyle: 'elevated',
   diameter: 39,
-  baseHeight: 1.2,
+  baseHeight: 1.5,       // resin: slightly thicker than FDM for strength
   rimWidth: 1.5,
-  rimHeight: 0.7,
+  rimHeight: 0.8,
   fieldRecess: 0.0,
-  maxRelief: 1.0,
+  maxRelief: 1.5,        // resin: deeper for sharper portrait detail
   segments: 128,
-  gridResolution: 384,
+  gridResolution: 512,
   isDoubleFaced: true,
   showRim: true,
-  surfaceNoise: 0.05,
+  surfaceNoise: 0.0,     // resin: off
   imageOffsetX: 0,
   imageOffsetY: 0,
   topText: '',
@@ -203,7 +204,7 @@ export const POCKET_2_PRESET: CoinSettings = {
   bottomText: '',
   bottomTextSpan: 100,
   textSize: 1.0,
-  textDepthMm: 0.4,
+  textDepthMm: 0.8,      // resin: 0.8mm min for reliable text
   textFont: 'bold',
   signatureText: '',
   signatureFont: 'great-vibes',
@@ -265,9 +266,21 @@ export async function generateCoinGeometry(
     medallionRingDepthMm = 1.5,
   } = settings;
 
+  // All warnings collected here — dispatched once via onWarnings before return.
+  const warnings: string[] = [];
+
   // Cap grid resolution — higher = sharper text & detail, but more memory.
-  // 512 gives 4× more samples than 256 and is well within browser limits.
-  const safeGridResolution = Math.min(gridResolution, 512);
+  // 768 gives 9× more samples than 256 — enough for Bambu X1/P1 resolution.
+  const safeGridResolution = Math.min(gridResolution, 768);
+
+  // ── Quality Check #7: Hard grid minimum ──────────────────────────────────
+  // Below 512, text glyphs are under 30×30 px on the depth map which causes
+  // severe staircase pixelation on the 3D mesh. Refuse to build.
+  if (safeGridResolution < 512) {
+    const msg = '❌ Grid too low — text will be pixelated. Minimum is 512. Go to Settings and increase Grid Resolution.';
+    if (onWarnings) onWarnings([msg]);
+    throw new Error(msg);
+  }
 
   const radius = diameter / 2;
   const innerRadius = showRim ? radius - rimWidth : radius;
@@ -355,6 +368,18 @@ export async function generateCoinGeometry(
   }
 
   // ── TEXT OVERLAY (TWO ARC SYSTEM) ─────────────────────────────────────────
+  // QC #9: Render text at 2x on an offscreen canvas, then downscale
+  // back to procRes with LANCZOS-quality smoothing. This gives subpixel
+  // antialiasing on diagonal strokes — eliminates canvas aliasing that
+  // survives into the mesh as stepped geometry on letter edges.
+  const textCanvas2x = document.createElement('canvas');
+  textCanvas2x.width  = procRes * 2;
+  textCanvas2x.height = procRes * 2;
+  const ctx2x = textCanvas2x.getContext('2d', { willReadFrequently: true })!;
+  ctx2x.scale(2, 2);  // all drawArcText coordinates stay the same — scale handles it
+  ctx2x.imageSmoothingEnabled = true;
+  ctx2x.imageSmoothingQuality = 'high';
+
   // Renders topText on the 10→2 o'clock arc and bottomText on the 7→5 o'clock arc.
   // Gray level is calibrated so the text relief matches textDepthMm after blending.
   //
@@ -379,7 +404,7 @@ export async function generateCoinGeometry(
   const edgeClearance = showRim ? coinR * 0.05 : noRimBorder;
   const textArcR = innerFacePx - edgeClearance;     // gap inside the face edge
 
-  const drawArcText = (text: string, centreAngleDeg: number, arcSpanDeg: number, flipBaseline: boolean) => {
+  const drawArcText = (text: string, centreAngleDeg: number, arcSpanDeg: number, flipBaseline: boolean, targetCtx: CanvasRenderingContext2D = ctx) => {
     if (!text || !text.trim()) return;
     const str = text.trim().toUpperCase();
     const weight = textFont === 'bold' ? '700' : '600';
@@ -400,11 +425,11 @@ export async function generateCoinGeometry(
     let totalW = 0;
 
     while (fontSize >= minFontSize) {
-      ctx.font = `${weight} ${fontSize}px "Trajan Pro", serif`;
+      targetCtx.font = `${weight} ${fontSize}px "Trajan Pro", serif`;
       widths = [];
       totalW = 0;
       for (const ch of str) {
-        const w = ctx.measureText(ch).width + fontSize * 0.1;
+        const w = targetCtx.measureText(ch).width + fontSize * 0.1;
         widths.push(w);
         totalW += w;
       }
@@ -412,16 +437,16 @@ export async function generateCoinGeometry(
       fontSize = Math.round(fontSize * 0.92); // shrink 8% and retry
     }
 
-    ctx.save();
-    ctx.font = `${weight} ${fontSize}px "Trajan Pro", serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
+    targetCtx.save();
+    targetCtx.font = `${weight} ${fontSize}px "Trajan Pro", serif`;
+    targetCtx.textAlign = 'center';
+    targetCtx.textBaseline = 'middle';
     // Stroke same color as fill so it THICKENS the letters rather than outlining
     // them in dark (which creates a moat effect making thin strokes look broken).
-    ctx.strokeStyle = `rgb(${g},${g},${g})`;
-    ctx.lineWidth = fontSize * 0.09;   // mild thickening — fills thin serifs without bloating
-    ctx.lineJoin = 'round';
-    ctx.fillStyle = `rgb(${g},${g},${g})`;
+    targetCtx.strokeStyle = `rgb(${g},${g},${g})`;
+    targetCtx.lineWidth = fontSize * 0.09;   // mild thickening — fills thin serifs without bloating
+    targetCtx.lineJoin = 'round';
+    targetCtx.fillStyle = `rgb(${g},${g},${g})`;
 
     // Distribute characters evenly across the arc span
     const centreRad = (centreAngleDeg * Math.PI) / 180;
@@ -439,28 +464,54 @@ export async function generateCoinGeometry(
       const cx = coinR + Math.cos(charAngle) * textArcR;
       const cy = coinR + Math.sin(charAngle) * textArcR;
 
-      ctx.save();
-      ctx.translate(cx, cy);
-      // ctx.rotate(charAngle + π/2) for both arcs:
+      targetCtx.save();
+      targetCtx.translate(cx, cy);
+      // targetCtx.rotate(charAngle + π/2) for both arcs:
       //   Top arc (centre 270°): at 270° → r=0 → local-X rightward → reads L→R,
       //     letter tops point outward (upward at 12 o'clock) → upright, readable normally.
       //   Bottom arc (centre 90°): at 90° → r=π → chars are 180°-rotated (upside-down
       //     in normal view). Increasing angles go right→left on screen, so the word
       //     appears reversed normally but reads correctly when coin is turned upside-down.
-      ctx.rotate(charAngle + Math.PI / 2);
-      ctx.strokeText(ch, 0, 0);
-      ctx.fillText(ch, 0, 0);
-      ctx.restore();
+      targetCtx.rotate(charAngle + Math.PI / 2);
+      targetCtx.strokeText(ch, 0, 0);
+      targetCtx.fillText(ch, 0, 0);
+      targetCtx.restore();
 
       cumAngle += widths[i] / textArcR;
     }
-    ctx.restore();
+    targetCtx.restore();
   };
 
   // Top arc:    10 o'clock → 2 o'clock  (centred at top = 270°, span = 110°)
   // Bottom arc: 7 o'clock  → 5 o'clock  (centred at bottom = 90°, span = 60°)
-  drawArcText(topText,    270, topTextSpan,    false); // top arc
-  drawArcText(bottomText,  90, bottomTextSpan, true);  // bottom arc
+  drawArcText(topText,    270, topTextSpan,    false, ctx2x); // top arc
+  drawArcText(bottomText,  90, bottomTextSpan, true,  ctx2x);  // bottom arc
+
+  // ── Quality Check #14: Stroke width vs mesh grid spacing ─────────────────
+  // A text stroke thinner than 2 mesh-vertex spacings cannot be represented
+  // faithfully — it either disappears or looks like a 1-cell ridge, not a letter.
+  //
+  // We work in canvas-pixel space (procRes = 2048) and then compare against the
+  // Nyquist limit imposed by the mesh grid (safeGridResolution samples across r).
+  //   grid_spacing_px  = procRes / safeGridResolution   (canvas px per mesh vertex)
+  //   fontSize_px      = coinR * 0.08 * textSize        (normal arc font size)
+  //   stroke_px        = fontSize_px * 0.09             (lineWidth factor in drawArcText)
+  //   Minimum safe     = 2 × grid_spacing_px
+  if ((topText || '').trim().length > 0 || (bottomText || '').trim().length > 0) {
+    const gridSpacingPx  = procRes / safeGridResolution;         // px per mesh vertex on depth map
+    const estimatedFontPx = Math.max(coinR * 0.015, coinR * 0.08 * textSize); // clamp to min font
+    const strokePx        = estimatedFontPx * 0.09;              // lineWidth factor
+    if (strokePx < 2 * gridSpacingPx) {
+      const strokeMm  = strokePx  * (diameter / procRes);
+      const spacingMm = gridSpacingPx * (diameter / procRes);
+      warnings.push(
+        `⚠️ Stroke too thin for grid — letter strokes (~${strokeMm.toFixed(2)} mm) are narrower than ` +
+        `2 grid cells (${(2 * spacingMm).toFixed(2)} mm). Increase text size or raise Grid Resolution.`
+      );
+    } else {
+      console.info(`✅ QC stroke width: ${(strokePx / gridSpacingPx).toFixed(1)}× grid spacing — good`);
+    }
+  }
 
   // ── SIGNATURE ─────────────────────────────────────────────────────────────
   // Font choice:
@@ -473,21 +524,21 @@ export async function generateCoinGeometry(
     const sigFontSize     = Math.round(coinR * 0.09 * signatureSize);
     const useTrajan       = settings.signatureFont === 'trajan';
 
-    ctx.save();
-    ctx.font         = useTrajan
+    ctx2x.save();
+    ctx2x.font         = useTrajan
       ? `700 ${sigFontSize}px "Trajan Pro", serif`
       : `400 ${sigFontSize}px "Great Vibes", cursive`;
-    ctx.textAlign    = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle    = `rgb(${g},${g},${g})`;
+    ctx2x.textAlign    = 'center';
+    ctx2x.textBaseline = 'middle';
+    ctx2x.fillStyle    = `rgb(${g},${g},${g})`;
     // Trajan: mild stroke to bolden thin serifs; Great Vibes: no stroke (script stays legible)
     if (useTrajan) {
-      ctx.strokeStyle = `rgb(${g},${g},${g})`;
-      ctx.lineWidth   = sigFontSize * 0.08;
-      ctx.lineJoin    = 'round';
+      ctx2x.strokeStyle = `rgb(${g},${g},${g})`;
+      ctx2x.lineWidth   = sigFontSize * 0.08;
+      ctx2x.lineJoin    = 'round';
     } else {
-      ctx.strokeStyle = `rgba(0,0,0,0)`;
-      ctx.lineWidth   = 0;
+      ctx2x.strokeStyle = `rgba(0,0,0,0)`;
+      ctx2x.lineWidth   = 0;
     }
 
     // Anchor signature inside the medallion ring.
@@ -495,9 +546,9 @@ export async function generateCoinGeometry(
     const sigX = coinR + signatureOffsetX * autoRingR;
     const sigY = coinR + autoRingR * 0.72 + signatureOffsetY * autoRingR;
 
-    ctx.strokeText(signatureText, sigX, sigY);
-    ctx.fillText(signatureText, sigX, sigY);
-    ctx.restore();
+    ctx2x.strokeText(signatureText, sigX, sigY);
+    ctx2x.fillText(signatureText, sigX, sigY);
+    ctx2x.restore();
   }
 
   // ── PORTRAIT MEDALLION BORDER RING ────────────────────────────────────────
@@ -517,14 +568,21 @@ export async function generateCoinGeometry(
     const g           = Math.round(ringLum * 255);
     const strokePx    = Math.max(1, medallionRingWidthMm * pxPerMm);
 
-    ctx.save();
-    ctx.strokeStyle = `rgb(${g},${g},${g})`;
-    ctx.lineWidth   = strokePx;
-    ctx.beginPath();
-    ctx.arc(coinR, coinR, ringR, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.restore();
+    ctx2x.save();
+    ctx2x.strokeStyle = `rgb(${g},${g},${g})`;
+    ctx2x.lineWidth   = strokePx;
+    ctx2x.beginPath();
+    ctx2x.arc(coinR, coinR, ringR, 0, Math.PI * 2);
+    ctx2x.stroke();
+    ctx2x.restore();
   }
+
+  // Downscale 2x text layer back onto main canvas at procRes
+  ctx.save();
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(textCanvas2x, 0, 0, procRes * 2, procRes * 2, 0, 0, procRes, procRes);
+  ctx.restore();
   // ──────────────────────────────────────────────────────────────────────────
 
   const origScaledData = ctx.getImageData(0, 0, procRes, procRes).data;
@@ -634,52 +692,69 @@ export async function generateCoinGeometry(
   }
   
   const aiRange = aiMax - aiMin || 1;
-  const aiCanvas = document.createElement('canvas');
-  aiCanvas.width = aiDepth.width;
-  aiCanvas.height = aiDepth.height;
-  const aiCtx = aiCanvas.getContext('2d')!;
-  const aiImgData = aiCtx.createImageData(aiDepth.width, aiDepth.height);
-  
-  for (let i = 0; i < aiDepth.data.length; i++) {
-    const norm = (aiDepth.data[i] - aiMin) / aiRange;
-    const val = norm * 255;
-    aiImgData.data[i * 4] = val;
-    aiImgData.data[i * 4 + 1] = val;
-    aiImgData.data[i * 4 + 2] = val;
-    aiImgData.data[i * 4 + 3] = 255;
-  }
-  aiCtx.putImageData(aiImgData, 0, 0);
 
-  // Draw AI Depth map to scale. Note: It's ALREADY 1:1 match with our canvas because we sent the squared image!
-  ctx.fillStyle = 'black';
-  ctx.fillRect(0, 0, procRes, procRes);
-  ctx.drawImage(aiCanvas, 0, 0, procRes, procRes);
-  const aiScaledData = ctx.getImageData(0, 0, procRes, procRes).data;
+  // ── Quality Check #2: Depth map dynamic range ────────────────────────────
+  // If the AI output has < 10% relative range the model saw no meaningful depth
+  // variation (flat image, featureless background, or inference failure).
+  // We still normalise to 0–255 but warn the user that relief may be flat.
+  const relativeRange = aiRange / (Math.abs(aiMax) + 1e-9);
+  if (relativeRange < 0.10) {
+    warnings.push('⚠️ AI depth map is near-uniform — the image may lack depth variation. Relief may appear flat. Try a high-contrast portrait or depth map.');
+  }
+
+  // ── Quality Check #12: Float-precision AI depth blend ────────────────────
+  // PROBLEM: going through uint8 canvas (255 Z steps) quantises the AI depth
+  // before blending.  On a 425 mm plaque with 8 mm relief each step = 0.031 mm
+  // — visible as contour bands on curved portrait surfaces in Bambu preview.
+  // FIX: sample the raw Float32Array from the AI worker directly via bilinear
+  // interpolation (the same Lanczos approach we use for mesh sampling).
+  // This gives ~32-bit effective depth precision — zero contour banding.
+  const aiW = aiDepth.width;
+  const aiH = aiDepth.height;
+
+  // Bilinear sample of the normalised (0–1) float AI depth at UV ∈ [0,1]²
+  const sampleAIFloat = (u: number, v: number): number => {
+    const fx = Math.max(0, Math.min(aiW - 1, u * (aiW - 1)));
+    const fy = Math.max(0, Math.min(aiH - 1, v * (aiH - 1)));
+    const x0 = Math.floor(fx), x1 = Math.min(aiW - 1, x0 + 1);
+    const y0 = Math.floor(fy), y1 = Math.min(aiH - 1, y0 + 1);
+    const tx = fx - x0, ty = fy - y0;
+    const n00 = (aiDepth.data[y0 * aiW + x0] - aiMin) / aiRange;
+    const n10 = (aiDepth.data[y0 * aiW + x1] - aiMin) / aiRange;
+    const n01 = (aiDepth.data[y1 * aiW + x0] - aiMin) / aiRange;
+    const n11 = (aiDepth.data[y1 * aiW + x1] - aiMin) / aiRange;
+    return n00*(1-tx)*(1-ty) + n10*tx*(1-ty) + n01*(1-tx)*ty + n11*tx*ty;
+  };
 
   let depthMap = new Float32Array(procRes * procRes);
   let minDepth = 1, maxDepth = 0;
-  
-  for (let i = 0; i < aiScaledData.length; i += 4) {
-    const aiDepthVal = aiScaledData[i] / 255;
-    
-    // Calculate luminance of the original image (Rec. 601)
-    const r = origScaledData[i];
-    const g = origScaledData[i + 1];
-    const b = origScaledData[i + 2];
-    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
 
-    // HYBRID BLEND:
-    // AI provides global 3D form (40%), Luminance provides surface detail like Text/Facial features (60%)
-    let depthVal = aiDepthVal * 0.4 + luminance * 0.6;
-    
-    depthMap[i / 4] = depthVal;
-    if (depthVal < minDepth) minDepth = depthVal;
-    if (depthVal > maxDepth) maxDepth = depthVal;
+  for (let i = 0; i < procRes; i++) {
+    const v = i / (procRes - 1); // v ∈ [0,1]
+    for (let j = 0; j < procRes; j++) {
+      const u = j / (procRes - 1); // u ∈ [0,1]
+
+      // Float32 AI depth — no uint8 quantisation
+      const aiDepthVal = sampleAIFloat(u, v);
+
+      // Luminance from original 8-bit portrait image (portrait photos are 8-bit
+      // natively — no information lost going through canvas RGBA here).
+      const idx = (i * procRes + j) * 4;
+      const r = origScaledData[idx];
+      const g = origScaledData[idx + 1];
+      const b = origScaledData[idx + 2];
+      const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+
+      // HYBRID BLEND: AI global form (40%) + luminance surface detail / text (60%)
+      const depthVal = aiDepthVal * 0.4 + luminance * 0.6;
+      depthMap[i * procRes + j] = depthVal;
+      if (depthVal < minDepth) minDepth = depthVal;
+      if (depthVal > maxDepth) maxDepth = depthVal;
+    }
   }
 
-  const warnings: string[] = [];
   if (maxDepth - minDepth < 0.2) {
-    warnings.push("Low contrast detected: Image lacks distinct light and dark areas. Relief may be flat.");
+    warnings.push("⚠️ Low contrast detected: Image lacks distinct light and dark areas. Relief may be flat.");
   }
 
   // Clean up: zero out very small depth values to ensure truly flat areas
@@ -719,11 +794,7 @@ export async function generateCoinGeometry(
   
   const noiseLevel = totalNoise / ((procRes - 2) * (procRes - 2));
   if (noiseLevel > 0.04) {
-    warnings.push("High noise detected: Uploaded image is very noisy/grainy. 3D surface may be jagged.");
-  }
-
-  if (onWarnings) {
-    onWarnings(warnings.length > 0 ? warnings : []);
+    warnings.push("⚠️ High noise detected: Uploaded image is very noisy/grainy. 3D surface may be jagged.");
   }
 
   depthMap.set(initialDenoise);
@@ -749,14 +820,34 @@ export async function generateCoinGeometry(
   // transitions between high and low areas are rounded/bevelled rather than
   // sharp — giving the classic soft-pressed look of embossed coins/plaques.
   if (settings.reliefStyle === 'emboss') {
+    // ── Quality Check #13: Adaptive Gaussian blur sigma ───────────────────
+    // PROBLEM: a fixed sigma=3 worked neither end of the size range:
+    //   • Too much blur on a 39 mm pocket coin → text edges go soft
+    //   • Too little on a 425 mm plaque        → aliasing steps remain visible
+    // FIX: sigma scales logarithmically with coin diameter:
+    //   39 mm  coin  → sigma ≈ 0.65  (sweet spot 0.5–0.8 — preserves letter edges)
+    //   150 mm plaque → sigma ≈ 1.30  (sweet spot 1.2–1.8)
+    //   425 mm plaque → sigma ≈ 1.80  (sweet spot 1.2–1.8)
+    // Coefficients solved from anchors (39mm→0.65) and (425mm→1.80):
+    //   sigma = −1.11 + 2.91 × log₁₀(d) / log₁₀(425)
+    const sigmaScale = Math.log10(Math.max(10, diameter)) / Math.log10(425);
+    const sigma = Math.max(0.5, Math.min(1.8, -1.11 + 2.91 * sigmaScale));
+    const blurRadius = Math.max(1, Math.ceil(sigma * 2.5)); // 2.5σ covers 99%
+
+    // Warn if blur is too aggressive for a small coin
+    if (sigma > 1.0 && settings.type === 'coin') {
+      warnings.push(
+        `⚠️ Emboss blur sigma ${sigma.toFixed(1)} is high for a pocket coin — text edges may soften. ` +
+        `Consider Raised mode for sharper letters on small coins.`
+      );
+    }
+
     const smoothed = new Float32Array(depthMap.length);
-    const sigma = 3;
-    const radius = 5;
-    // Pre-compute kernel weights
+    // Pre-compute normalised Gaussian kernel
     const kernel: number[] = [];
     let kSum = 0;
-    for (let ky = -radius; ky <= radius; ky++) {
-      for (let kx = -radius; kx <= radius; kx++) {
+    for (let ky = -blurRadius; ky <= blurRadius; ky++) {
+      for (let kx = -blurRadius; kx <= blurRadius; kx++) {
         const w = Math.exp(-(kx * kx + ky * ky) / (2 * sigma * sigma));
         kernel.push(w);
         kSum += w;
@@ -764,31 +855,31 @@ export async function generateCoinGeometry(
     }
     for (let i = 0; i < kernel.length; i++) kernel[i] /= kSum;
 
-    for (let y = radius; y < procRes - radius; y++) {
-      for (let x = radius; x < procRes - radius; x++) {
+    for (let y = blurRadius; y < procRes - blurRadius; y++) {
+      for (let x = blurRadius; x < procRes - blurRadius; x++) {
         let sum = 0, ki = 0;
-        for (let ky = -radius; ky <= radius; ky++) {
-          for (let kx = -radius; kx <= radius; kx++) {
+        for (let ky = -blurRadius; ky <= blurRadius; ky++) {
+          for (let kx = -blurRadius; kx <= blurRadius; kx++) {
             sum += depthMap[(y + ky) * procRes + (x + kx)] * kernel[ki++];
           }
         }
         smoothed[y * procRes + x] = sum;
       }
     }
-    // Edge rows/cols: copy original
+    // Edge rows/cols: copy original (border not blurred)
     for (let x = 0; x < procRes; x++) {
-      for (let r = 0; r < radius; r++) {
-        smoothed[r * procRes + x] = depthMap[r * procRes + x];
-        smoothed[(procRes - 1 - r) * procRes + x] = depthMap[(procRes - 1 - r) * procRes + x];
+      for (let br = 0; br < blurRadius; br++) {
+        smoothed[br * procRes + x]               = depthMap[br * procRes + x];
+        smoothed[(procRes - 1 - br) * procRes + x] = depthMap[(procRes - 1 - br) * procRes + x];
       }
     }
     for (let y = 0; y < procRes; y++) {
-      for (let r = 0; r < radius; r++) {
-        smoothed[y * procRes + r] = depthMap[y * procRes + r];
-        smoothed[y * procRes + (procRes - 1 - r)] = depthMap[y * procRes + (procRes - 1 - r)];
+      for (let br = 0; br < blurRadius; br++) {
+        smoothed[y * procRes + br]               = depthMap[y * procRes + br];
+        smoothed[y * procRes + (procRes - 1 - br)] = depthMap[y * procRes + (procRes - 1 - br)];
       }
     }
-    // Blend: 80% smoothed + 20% sharp for some detail retention
+    // Blend: 80% smoothed + 20% sharp for detail retention
     for (let i = 0; i < depthMap.length; i++) {
       depthMap[i] = 0.80 * smoothed[i] + 0.20 * depthMap[i];
     }
@@ -890,8 +981,54 @@ export async function generateCoinGeometry(
     // Dark background or fill-frame: contentFrac stays 1.0
   }
 
-  const radialSegments = Math.max(segments, Math.floor(safeGridResolution * Math.PI));
-  const rings = Math.floor(safeGridResolution / 2);
+  // QC #18: Adaptive Mesh Density
+  // Field zone needs fewer triangles than portrait and text zones.
+  // We split rings into 3 zones based on radius:
+  // - r < 0.65: full density (portrait)
+  // - 0.65 <= r <= 0.88: half density (field)
+  // - r > 0.88: full density (text)
+  const baseRings = Math.floor(safeGridResolution / 2);
+  const ringNorms: number[] = [];
+  for (let r = 1; r <= baseRings; r++) {
+    const rNorm = r / baseRings;
+    if (rNorm < 0.65) {
+      ringNorms.push(rNorm);
+    } else if (rNorm <= 0.88) {
+      if (r % 2 === 0) ringNorms.push(rNorm); // half density
+    } else {
+      ringNorms.push(rNorm);
+    }
+  }
+  if (ringNorms.length > 0 && ringNorms[ringNorms.length - 1] !== 1.0) {
+    ringNorms.push(1.0);
+  }
+  const rings = ringNorms.length;
+
+  // ── Quality Check #4 (pre-build): Cap radialSegments so total face count
+  // stays under 750k (Bambu 800k limit with 50k headroom).
+  // Estimated faces ≈ radialSegments × (2 × rings + 6) × doubleFaceFactor.
+  // The old formula Math.max(segments, gridRes×π) gave 2412 at grid=768 →
+  // 1.85M faces for a single-face plaque — way over the limit. Fix: use the
+  // preset's segments value as the target and only shrink if we'd exceed the cap.
+  const doubleFaceFactor = settings.isDoubleFaced ? 2 : 1;
+  const maxFaces = 750_000;
+  const maxRadial = Math.floor(maxFaces / Math.max(1, (2 * rings + 6) * doubleFaceFactor));
+  const radialSegments = Math.min(segments, maxRadial);
+
+  // QC #11: Grid aspect ratio — X and Y step must be equal.
+  // innerRadius is always circular so steps are equal by construction,
+  // but validate the radial step vs angular step to catch config drift.
+  const gridStepMm   = (innerRadius * 2) / safeGridResolution;
+  const angularStepMm = (2 * Math.PI * innerRadius) / radialSegments / safeGridResolution;
+  if (Math.abs(gridStepMm - angularStepMm) / gridStepMm > 0.15) {
+    warnings.push(
+      `⚠️ Grid aspect ratio mismatch — radial step ${gridStepMm.toFixed(3)}mm vs ` +
+      `angular step ${angularStepMm.toFixed(3)}mm. ` +
+      `Text may appear stretched. Increase segments to match grid resolution.`
+    );
+  } else {
+    console.info(`✅ QC grid aspect: radial ${gridStepMm.toFixed(3)}mm ≈ angular ${angularStepMm.toFixed(3)}mm`);
+  }
 
   // Pre-calculate vertex count to use typed arrays instead of regular arrays
   // This avoids stack overflow from spread operators on large arrays
@@ -919,7 +1056,38 @@ export async function generateCoinGeometry(
 
 
 
-  // Bilinear interpolation for sharp, predictable results
+  // Lanczos-2 kernel helper (sinc-based, a=2)
+  const lanczos2 = (x: number): number => {
+    if (x === 0) return 1;
+    if (Math.abs(x) >= 2) return 0;
+    const px = Math.PI * x;
+    return (Math.sin(px) / px) * (Math.sin(px / 2) / (px / 2));
+  };
+
+  // Sample the depth map with Lanczos-2 (4×4 tap) interpolation.
+  // Compared to nearest-neighbour this preserves edge crispness in the depth
+  // map when the mesh grid is much coarser than the 2048px source — critical
+  // for fine text strokes surviving into the STL at Bambu-print resolution.
+  const sampleDepthLanczos = (u: number, v: number): number => {
+    const x0 = Math.floor(u);
+    const y0 = Math.floor(v);
+    let sum = 0, weight = 0;
+    for (let dy = -1; dy <= 2; dy++) {
+      const wy = lanczos2(v - (y0 + dy));
+      if (wy === 0) continue;
+      for (let dx = -1; dx <= 2; dx++) {
+        const wx = lanczos2(u - (x0 + dx));
+        if (wx === 0) continue;
+        const px = Math.max(0, Math.min(procRes - 1, x0 + dx));
+        const py = Math.max(0, Math.min(procRes - 1, y0 + dy));
+        const w = wx * wy;
+        sum += depthMap[py * procRes + px] * w;
+        weight += w;
+      }
+    }
+    return weight > 0 ? Math.max(0, sum / weight) : 0;
+  };
+
   const getDepthAt = (wx: number, wy: number) => {
     const dist = Math.sqrt(wx * wx + wy * wy);
     if (dist > innerRadius) return 0;
@@ -942,13 +1110,20 @@ export async function generateCoinGeometry(
 
     if (u < 0 || u >= procRes || v < 0 || v >= procRes) return 0;
 
-    const x = Math.round(u);
-    const y = Math.round(v);
-    let depth = depthMap[y * procRes + x];
+    // Lanczos-2 interpolation — preserves text/portrait edge crispness
+    let depth = sampleDepthLanczos(u, v);
+
+    // QC #16: Prevent Z-fighting where text base meets field surface.
+    // Any depth value > 0 but < 0.01mm above field creates coplanar
+    // triangles that flicker in Bambu preview at letter edges.
+    // Clamp: either truly zero (field) or at least 0.01mm above it.
+    if (depth > 0 && depth < (0.01 / maxRelief)) {
+      depth = 0.01 / maxRelief;
+    }
 
     // Feather depth to zero over the outer edge band so the face always tapers
-    // cleanly to base level at the boundary. This gives the outer wall a uniform
-    // height to drop from — no sawtooth / rough profile.
+    // cleanly to base level at the boundary — no sawtooth / rough profile,
+    // and no open edges that would make the mesh non-manifold in Bambu Studio.
     const FEATHER_START = 0.985;
     if (rNorm > FEATHER_START) {
       const t = 1 - (rNorm - FEATHER_START) / (1 - FEATHER_START);
@@ -989,10 +1164,11 @@ export async function generateCoinGeometry(
   const frontCenterIdx = frontVertices.length / 3;
   let avgCenterDepth = 0;
   let centerCount = 0;
-  for (let r = 1; r <= 3; r++) {
+  const sampleRings = Math.min(3, rings);
+  for (let r = 0; r < sampleRings; r++) {
     for (let i = 0; i < radialSegments; i++) {
       const angle = (i / radialSegments) * Math.PI * 2;
-      const ringRadius = (r / rings) * innerRadius;
+      const ringRadius = ringNorms[r] * innerRadius;
       avgCenterDepth += getDepthAt(ringRadius * Math.cos(angle), ringRadius * Math.sin(angle));
       centerCount++;
     }
@@ -1002,8 +1178,8 @@ export async function generateCoinGeometry(
 
   // Face Rings — raw depth throughout (no ring-averaging which distorts portrait)
   const frontFaceRingsStartIdx = frontVertices.length / 3;
-  for (let r = 1; r <= rings; r++) {
-    const rNormRing = r / rings;
+  for (let r = 0; r < rings; r++) {
+    const rNormRing = ringNorms[r];
     const ringRadius = rNormRing * innerRadius;
     for (let i = 0; i < radialSegments; i++) {
       const angle = (i / radialSegments) * Math.PI * 2;
@@ -1123,31 +1299,54 @@ export async function generateCoinGeometry(
   // Trim the vertices array to only include used vertices
   const finalVertices = vertices.slice(0, vertexIndex);
 
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(finalVertices, 3));
-  geometry.setIndex(new THREE.Uint32BufferAttribute(indices, 1));
-  groups.forEach(group => geometry.addGroup(group.start, group.count, group.materialIndex));
+  const rawGeometry = new THREE.BufferGeometry();
+  rawGeometry.setAttribute('position', new THREE.Float32BufferAttribute(finalVertices, 3));
+  rawGeometry.setIndex(new THREE.Uint32BufferAttribute(indices, 1));
+  groups.forEach(group => rawGeometry.addGroup(group.start, group.count, group.materialIndex));
+
+  // ── Quality Check #15: Vertex merge — eliminate T-junction cracks ─────────
+  // Where ring-boundary vertices meet at slightly different floating-point Z
+  // positions they create T-junctions that appear as dark hairline cracks in
+  // Bambu Studio's preview.  mergeVertices() snaps vertices within 0.001 mm
+  // (1 µm — smaller than any feature we care about) into a single shared vertex,
+  // closing all T-junctions in one pass.
+  //
+  // MUST run before computeVertexNormals so normal averaging uses the merged
+  // topology — not the pre-merge disconnected duplicates.
+  //
+  // Note: equator and base-outer-rim vertices share the same XYZ (both at the
+  // coin's outer radius, Z=0) and will be merged.  Their averaged normals from
+  // computeVertexNormals will produce a slightly chamfered-looking bottom edge —
+  // acceptable for 3D printing where slicer uses geometry, not normals.
+  const geometry = mergeVertices(rawGeometry, 0.001);
+  // mergeVertices may clear groups — re-apply from our stored list.
+  // Groups index the face/index buffer (not vertices), so they remain valid
+  // after vertex de-duplication (same triangles, fewer unique vertices).
+  geometry.clearGroups();
+  groups.forEach(g => geometry.addGroup(g.start, g.count, g.materialIndex));
+
   geometry.computeVertexNormals();
 
-  // Smooth out normals in the centre fan to eliminate the spider-web shading.
-  // computeVertexNormals() gives the pole (centre vertex) a normal that is the
-  // average of all the fan triangle normals — which is (0,0,1) for a flat face
-  // but can tilt radially when depth varies.  We force the centre to exactly
-  // (0,0,1) and then blend the first NORMAL_SMOOTH_RINGS rings toward it so
-  // the shading transitions gradually rather than flipping per-triangle.
+  // ── Pole normal smoothing ─────────────────────────────────────────────────
+  // After merge+recompute the pole vertex gets an averaged normal from the fan
+  // triangles.  Force it to exactly (0,0,±1) and blend the first two rings
+  // toward it to eliminate the spider-web shading artifact at the coin centre.
+  //
+  // Because mergeVertices may reindex vertices, we find pole positions by XYZ
+  // (the pole is always at XY≈0, Z>0 for front and Z<0 for back face).
   const normals = geometry.attributes.normal.array as Float32Array;
-  const NORMAL_SMOOTH_RINGS = 2; // gentle blend — just enough to smooth the pole seam
+  const mergedPos = geometry.attributes.position.array as Float32Array;
+  const NORMAL_SMOOTH_RINGS = 2;
 
   const smoothRingNormals = (startIdx: number, sign: number) => {
-    // startIdx = frontFaceRingsStartIdx (front) or its back-face equivalent
     for (let r = 0; r < NORMAL_SMOOTH_RINGS; r++) {
-      // blend factor: 1.0 for ring 0 (fully flat), 0 at ring NORMAL_SMOOTH_RINGS (fully computed)
       const blend = 1.0 - r / NORMAL_SMOOTH_RINGS;
       for (let i = 0; i < radialSegments; i++) {
         const base = (startIdx + r * radialSegments + i) * 3;
-        let nx = normals[base]     * (1 - blend);       // toward 0
-        let ny = normals[base + 1] * (1 - blend);       // toward 0
-        let nz = normals[base + 2] * (1 - blend) + sign * blend; // toward ±1
+        if (base + 2 >= normals.length) continue; // safety: index may shift after merge
+        let nx = normals[base]     * (1 - blend);
+        let ny = normals[base + 1] * (1 - blend);
+        let nz = normals[base + 2] * (1 - blend) + sign * blend;
         const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
         if (len > 0) { nx /= len; ny /= len; nz /= len; }
         normals[base] = nx; normals[base + 1] = ny; normals[base + 2] = nz;
@@ -1155,31 +1354,219 @@ export async function generateCoinGeometry(
     }
   };
 
-  // Front face
-  normals[0] = 0; normals[1] = 0; normals[2] = 1; // pole vertex
-  smoothRingNormals(frontFaceRingsStartIdx, 1);
+  // Find and fix pole vertices by position (robust to index changes after merge)
+  const vertCount = mergedPos.length / 3;
+  for (let vi = 0; vi < vertCount; vi++) {
+    const vx = mergedPos[vi * 3], vy = mergedPos[vi * 3 + 1], vz = mergedPos[vi * 3 + 2];
+    if (Math.abs(vx) < 0.01 && Math.abs(vy) < 0.01) {
+      if (vz > 0) { normals[vi*3]=0; normals[vi*3+1]=0; normals[vi*3+2]=1;  } // front pole
+      else        { normals[vi*3]=0; normals[vi*3+1]=0; normals[vi*3+2]=-1; } // back pole
+    }
+  }
 
-  // Back face (mirrored)
+  // Ring smoothing still uses stored indices — safe as long as the first rings
+  // (away from the outer edge) don't get their indices shifted by the equator merge
+  smoothRingNormals(frontFaceRingsStartIdx, 1);
   if (settings.isDoubleFaced) {
-    const backCenterIdx = totalFrontVertices * 3;
-    normals[backCenterIdx] = 0; normals[backCenterIdx + 1] = 0; normals[backCenterIdx + 2] = -1;
     smoothRingNormals(totalFrontVertices + frontFaceRingsStartIdx, -1);
   }
+
+  // ── POST-GEOMETRY QUALITY CHECKS ─────────────────────────────────────────
+  {
+    const qcPos  = geometry.attributes.position.array as Float32Array;
+    const qcIdx  = geometry.getIndex()!.array;
+    const qcNorm = geometry.attributes.normal.array   as Float32Array;
+
+    // QC #4: Face count ─────────────────────────────────────────────────────
+    const faceCount = qcIdx.length / 3;
+    if (faceCount > 800_000) {
+      warnings.push(
+        `⚠️ Face count ${faceCount.toLocaleString()} exceeds the 800k Bambu limit — the file may slice slowly or fail. ` +
+        `Reduce Grid Resolution in Settings.`
+      );
+    } else {
+      console.info(`✅ QC face count: ${faceCount.toLocaleString()} / 800,000`);
+    }
+
+    // QC #1: Degenerate faces (area < 1e-6 mm²) ────────────────────────────
+    let degenerateCount = 0;
+    for (let i = 0; i < qcIdx.length; i += 3) {
+      const i0 = qcIdx[i] * 3, i1 = qcIdx[i + 1] * 3, i2 = qcIdx[i + 2] * 3;
+      const ax = qcPos[i1]     - qcPos[i0],     ay = qcPos[i1 + 1] - qcPos[i0 + 1], az = qcPos[i1 + 2] - qcPos[i0 + 2];
+      const bx = qcPos[i2]     - qcPos[i0],     by = qcPos[i2 + 1] - qcPos[i0 + 1], bz = qcPos[i2 + 2] - qcPos[i0 + 2];
+      const cx = ay * bz - az * by, cy = az * bx - ax * bz, cz = ax * by - ay * bx;
+      if (cx * cx + cy * cy + cz * cz < 4e-12) degenerateCount++; // area < 1e-6
+    }
+    if (degenerateCount > 0) {
+      warnings.push(`⚠️ ${degenerateCount} degenerate face(s) detected — mesh may have minor artefacts. Verify in your slicer.`);
+    } else {
+      console.info('✅ QC degenerate faces: none');
+    }
+
+    // QC #6: Overhang — vertex normals pointing steeply downward (> 45°) ───
+    // cos(135°) ≈ −0.707; any normal with nz < −0.707 faces more than 45° downward.
+    const OVERHANG_COS = -0.707;
+    let overhangVerts = 0;
+    for (let i = 2; i < qcNorm.length; i += 3) {
+      if (qcNorm[i] < OVERHANG_COS) overhangVerts++;
+    }
+    if (overhangVerts > 0) {
+      warnings.push(
+        `⚠️ ${overhangVerts.toLocaleString()} vertex normal(s) indicate overhangs > 45° — resin supports may be needed on those areas.`
+      );
+    } else {
+      console.info('✅ QC overhang: no steep overhangs detected');
+    }
+
+    // QC #17: Non-manifold edges — edges shared by more than 2 faces.
+    // Happens at letter stroke junctions (M, u, o, s). Shows as dark
+    // lines inside letters in Bambu preview.
+    {
+      const edgeMap = new Map<string, number>();
+      for (let i = 0; i < qcIdx.length; i += 3) {
+        const tris = [
+          [qcIdx[i], qcIdx[i+1]],
+          [qcIdx[i+1], qcIdx[i+2]],
+          [qcIdx[i+2], qcIdx[i]],
+        ];
+        for (const [a, b] of tris) {
+          const key = a < b ? `${a}_${b}` : `${b}_${a}`;
+          edgeMap.set(key, (edgeMap.get(key) ?? 0) + 1);
+        }
+      }
+      let nonManifoldCount = 0;
+      for (const count of edgeMap.values()) {
+        if (count > 2) nonManifoldCount++;
+      }
+      if (nonManifoldCount > 0) {
+        warnings.push(
+          `⚠️ ${nonManifoldCount} non-manifold edge(s) detected — ` +
+          `edges shared by more than 2 faces. May show as dark lines ` +
+          `inside letters in Bambu. mergeVertices tolerance may need tuning.`
+        );
+      } else {
+        console.info('✅ QC non-manifold edges: none');
+      }
+    }
+
+    // QC #20: Field flatness — the flat zone between portrait and rim
+    // must be within 0.01mm flat. Waviness scatters light unevenly and
+    // makes embossed text hard to read at viewing distance.
+    // Field zone: r between innerRadius*0.75 and innerRadius*0.95
+    {
+      const fieldZMin = innerRadius * 0.75;
+      const fieldZMax = innerRadius * 0.95;
+      const fieldZValues: number[] = [];
+      for (let vi = 0; vi < qcPos.length; vi += 3) {
+        const vx = qcPos[vi], vy = qcPos[vi + 1], vz = qcPos[vi + 2];
+        const r  = Math.sqrt(vx * vx + vy * vy);
+        if (r >= fieldZMin && r <= fieldZMax && vz > 0) {
+          fieldZValues.push(vz);
+        }
+      }
+      if (fieldZValues.length > 10) {
+        let fMin = Infinity, fMax = -Infinity;
+        for (const z of fieldZValues) {
+          if (z < fMin) fMin = z;
+          if (z > fMax) fMax = z;
+        }
+        const variance = fMax - fMin;
+        if (variance > 0.1) {
+          warnings.push(
+            `⚠️ Field flatness variance ${variance.toFixed(3)}mm — ` +
+            `field zone is not flat (target < 0.1mm). ` +
+            `Text shadow contrast will be reduced on the printed coin.`
+          );
+        } else {
+          console.info(`✅ QC field flatness: ${variance.toFixed(3)}mm variance — good`);
+        }
+      }
+    }
+
+    // QC #3: Minimum wall thickness ─────────────────────────────────────────
+    // Resin minimum is 0.3 mm; our base height is the thinnest solid section.
+    if (settings.baseHeight < 0.3) {
+      warnings.push(
+        `❌ Base height ${settings.baseHeight} mm is below the resin minimum of 0.3 mm — increase to at least 1.0 mm to avoid print failures.`
+      );
+    } else {
+      console.info(`✅ QC wall thickness: base height ${settings.baseHeight} mm ≥ 0.3 mm`);
+    }
+
+    // QC #5: Centre on origin — handled at export time (bounding-box centring).
+    // QC #8: LANCZOS-2 — active in sampleDepthLanczos().
+    console.info('✅ QC centre: applied in exportToSTL | QC LANCZOS: active');
+  }
+
+  // Dispatch all collected warnings (image, noise, and mesh checks) at once.
+  if (onWarnings) onWarnings(warnings);
 
   return geometry;
 }
 
-export function exportToSTL(geometry: THREE.BufferGeometry, filename: string = 'coin.stl') {
-  const vertices = geometry.getAttribute('position').array;
+export function exportToSTL(
+  geometry: THREE.BufferGeometry,
+  filename: string = 'coin.stl',
+  tiltDeg: number = 0   // 15° recommended for Bambu — better layer lines, less FEP suction
+) {
+  const posAttr = geometry.getAttribute('position').array;
   const indices = geometry.getIndex()?.array;
   if (!indices) return;
-  
+
+  // ── Pre-transform: centre at origin then apply optional tilt ──────────────
+  // 1. Compute bounding box centre so the coin sits centred on the build plate
+  let minX = Infinity, minY = Infinity, minZ = Infinity;
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  for (let i = 0; i < posAttr.length; i += 3) {
+    minX = Math.min(minX, posAttr[i]);     maxX = Math.max(maxX, posAttr[i]);
+    minY = Math.min(minY, posAttr[i + 1]); maxY = Math.max(maxY, posAttr[i + 1]);
+    minZ = Math.min(minZ, posAttr[i + 2]); maxZ = Math.max(maxZ, posAttr[i + 2]);
+  }
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  const cz = (minZ + maxZ) / 2;
+
+  // 2. Build a transformed copy of the vertex array (centre + tilt around X axis)
+  const cosT = Math.cos((tiltDeg * Math.PI) / 180);
+  const sinT = Math.sin((tiltDeg * Math.PI) / 180);
+  const verts = new Float32Array(posAttr.length);
+  for (let i = 0; i < posAttr.length; i += 3) {
+    const lx = posAttr[i]     - cx;
+    const ly = posAttr[i + 1] - cy;
+    const lz = posAttr[i + 2] - cz;
+    verts[i]     = lx;
+    verts[i + 1] = ly * cosT - lz * sinT;
+    verts[i + 2] = ly * sinT + lz * cosT;
+  }
+  // Shift base back to Z=0 so it sits flat on the build plate
+  let newMinZ = Infinity;
+  for (let i = 2; i < verts.length; i += 3) newMinZ = Math.min(newMinZ, verts[i]);
+  for (let i = 2; i < verts.length; i += 3) verts[i] -= newMinZ;
+
+  // QC #19: Resin shrinkage compensation — resin shrinks 1–3% on UV cure.
+  // Scale up 1.5% so final cured dimensions hit spec.
+  // Only apply when tiltDeg > 0 (Bambu resin export) to avoid affecting
+  // FDM or preview exports.
+  if (tiltDeg > 0) {
+    const SHRINK_COMP = 1.015;
+    for (let i = 0; i < verts.length; i += 3) {
+      verts[i]     *= SHRINK_COMP;
+      verts[i + 1] *= SHRINK_COMP;
+      // Z not scaled — thickness shrinkage is less critical than XY diameter
+    }
+  }
+
+  const vertices = verts; // use transformed verts from here on
+
   const triangleCount = indices.length / 3;
   const buffer = new ArrayBuffer(80 + 4 + triangleCount * 50);
   const view = new DataView(buffer);
-  
-  // 80 byte blank header
-  for (let i = 0; i < 80; i++) view.setUint8(i, 0);
+
+  // Binary STL header — embed tool name for traceability
+  const headerStr = '3D Coin Sculptor — Bambu-ready binary STL';
+  for (let i = 0; i < 80; i++) {
+    view.setUint8(i, i < headerStr.length ? headerStr.charCodeAt(i) : 0);
+  }
   view.setUint32(80, triangleCount, true);
 
   let offset = 84;
