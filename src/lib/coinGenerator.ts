@@ -918,39 +918,33 @@ export async function generateCoinGeometry(
     if (textMask[ti] > depthMap[ti]) depthMap[ti] = textMask[ti];
   }
 
-  // ── Text zone flattening ───────────────────────────────────────────────────
-  // Problem: portrait luminance (light clothing, bright backgrounds) extends
-  // into the text arc ring, creating noisy depth in the exact zone where arc
-  // text lives. The text depth (0.47–0.55) is often lower than the background
-  // depth (0.5–0.8), so the textMask "greater than" override fails silently
-  // and letters get buried in the portrait surface.
+  // ── Portrait radial fade ──────────────────────────────────────────────────
+  // Smoothly fade portrait depth to zero outside the portrait zone.
+  // This replaces the old "hard-zero text zone" approach which created a sharp
+  // circular cliff in the mesh (visible as a rope/ring artifact in the preview).
   //
-  // Fix: zero the depth map in the outer face ring (where text lives), then
-  // unconditionally restore text pixels. Letters now sit on a clean flat field
-  // — the same look as real struck/minted coins.
+  // Cosine falloff: full portrait depth at r ≤ fadeStart, zero at r ≥ fadeEnd.
+  // The text and field zones (r > fadeEnd) become a clean flat background so
+  // arc text and signature are always on a flat coin field — like real struck coins.
   //
-  // The text zone spans from just below the text arc to the inner face edge.
-  // A band of ±16% of innerFacePx around textArcR captures all character pixels
-  // including descenders and ascenders on any font size.
-  if ((topText || '').trim().length > 0 || (bottomText || '').trim().length > 0
-    || (settings.signatureText || '').trim().length > 0) {
-    const textZoneRInner = Math.max(0, textArcR - innerFacePx * 0.16) / coinR;
-    const textZoneROuter = innerFacePx / coinR;
+  // The medallionRing and arcText are NOT applied here; they're restored via
+  // the final textMask pass after all normalizations (see below).
+  {
+    const fadeStart = 0.60; // portrait keeps full depth inside here
+    const fadeEnd   = 0.72; // portrait is fully faded by here
     for (let i = 0; i < procRes; i++) {
       for (let j = 0; j < procRes; j++) {
         const dx = (j - coinR) / coinR;
         const dy = (i - coinR) / coinR;
-        const rNorm = Math.sqrt(dx * dx + dy * dy);
-        if (rNorm >= textZoneRInner && rNorm <= textZoneROuter) {
-          depthMap[i * procRes + j] = 0; // flat field — text overlay follows
+        const r = Math.sqrt(dx * dx + dy * dy);
+        if (r > fadeStart) {
+          // Cosine fade: 1 → 0 smoothly across the fade band
+          const fade = r >= fadeEnd ? 0.0
+            : (Math.cos((r - fadeStart) / (fadeEnd - fadeStart) * Math.PI) + 1.0) * 0.5;
+          depthMap[i * procRes + j] *= fade;
         }
       }
     }
-    // Unconditional textMask overlay (no ">": text always wins inside its zone)
-    for (let ti = 0; ti < depthMap.length; ti++) {
-      if (textMask[ti] > 0) depthMap[ti] = textMask[ti];
-    }
-    console.info('✅ Text zone flattened — portrait depth cleared in arc ring, text re-applied on clean field');
   }
 
   // Skip median filters entirely - they soften edges and blur detail
@@ -1077,6 +1071,31 @@ export async function generateCoinGeometry(
     }
   }
 
+  // ── Final text application (AFTER all normalizations) ────────────────────
+  // Problem: S-curve normalization (above) rescales every depth value, so the
+  // carefully calibrated textMask depths applied before normalisation become
+  // unpredictable. Signature can be buried under bright portrait areas.
+  // Fix: apply textMask ONE LAST TIME, here, in the final [0,1] space.
+  //
+  // textMask values range from 0 to textDepthTarget (= textDepthMm/maxRelief).
+  // We remap them to [0, finalTextNorm] in the normalised output space.
+  // For arc text (living in the flat-faded zone ≈ 0): text always rises above field.
+  // For signature (living in portrait zone): unconditional override ensures it always
+  // sits proud of the portrait surface at the target depth.
+  {
+    const textDepthTargetFinal = Math.min(1.0, textDepthMm / Math.max(0.1, maxRelief));
+    // Slight boost: text at 110% of textDepthMm/maxRelief guarantees visibility
+    const finalTextNorm = Math.min(0.97, textDepthTargetFinal * 1.1);
+    for (let ti = 0; ti < depthMap.length; ti++) {
+      if (textMask[ti] > 0.04) { // skip near-zero anti-alias fringe pixels
+        // Remap: textMask 0→textDepthTargetFinal maps to 0→finalTextNorm
+        const t = Math.min(1.0, textMask[ti] / Math.max(0.01, textDepthTargetFinal));
+        depthMap[ti] = t * finalTextNorm; // unconditional — text always at target
+      }
+    }
+    console.info(`✅ Text applied at final normalised depth ${finalTextNorm.toFixed(3)}`);
+  }
+
   // ── Quality Check #20: Field flatness ────────────────────────────────────
   // Sample the annular zone between portrait (65% r) and text arc (90% r).
   // This "field" should be nearly flat — high variance means portrait background
@@ -1097,23 +1116,13 @@ export async function generateCoinGeometry(
       const fVar  = fieldSamples.reduce((s, v) => s + (v - fMean) ** 2, 0) / fieldSamples.length;
       const fStdMm = Math.sqrt(fVar) * maxRelief;
       if (fStdMm > 0.1) {
-        // Auto-fix: blend field zone toward its 20th-percentile depth (near-flat baseline).
-        // 75% blend gives a mostly flat field while preserving gentle portrait fall-off.
-        const sorted = fieldSamples.slice().sort((a, b) => a - b);
-        const fieldTarget = sorted[Math.floor(sorted.length * 0.20)];
-        for (let fy = 0; fy < procRes; fy++) {
-          for (let fx = 0; fx < procRes; fx++) {
-            const fdx = fx - centerX, fdy = fy - centerY;
-            const fr = Math.sqrt(fdx * fdx + fdy * fdy) / maxRadius;
-            if (fr >= fieldRmin && fr <= fieldRmax) {
-              const ti = fy * procRes + fx;
-              depthMap[ti] = depthMap[ti] * 0.25 + fieldTarget * 0.75;
-            }
-          }
-        }
+        // Portrait radial fade (above) should have zeroed the field zone.
+        // If variance is still high, the portrait extends unusually far outward.
+        // No auto-fix here (would overwrite text pixels applied just above);
+        // instead advise using a tighter portrait crop or dark background.
         warnings.push(
-          `[auto-fixed] Field zone smoothed (σ was ${fStdMm.toFixed(3)}mm → portrait ` +
-          `background depth flattened in arc ring for cleaner text contrast).`
+          `⚠️ Field flatness σ ${fStdMm.toFixed(3)}mm — portrait may extend into the text ` +
+          `ring. Use a portrait with a dark/neutral background for a cleaner field.`
         );
       } else {
         console.info(`✅ QC field flatness: σ = ${fStdMm.toFixed(3)} mm`);
