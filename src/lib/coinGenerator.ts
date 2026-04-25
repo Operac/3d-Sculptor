@@ -1273,6 +1273,30 @@ export async function generateCoinGeometry(
     // Dark background or fill-frame: contentFrac stays 1.0
   }
 
+  // ── Content-fraction safety clamp for arc text ────────────────────────────
+  // getDepthAt() samples the depth map at:
+  //   tx = 0.5 + cos(angle) × rNorm_world × (0.5 × contentFrac)
+  // So a depth-map pixel at radius R maps to world-space:
+  //   rNorm_world = (R / coinR) / contentFrac
+  // If contentFrac is too small, the arc text (R ≈ textArcR, r-fraction ≈ 0.87)
+  // maps to rNorm_world > 1.0 — outside the coin — and getDepthAt() returns 0.
+  // The text becomes completely invisible in the mesh (only the chain-link outline
+  // of the medallion ring near the boundary is visible as bumps).
+  //
+  // Fix: ensure contentFrac is always large enough so textArcR maps to
+  // rNorm_world ≤ 0.96 (safely inside the coin face).
+  //   Required: contentFrac ≥ textArcR / (coinR × 0.96)
+  {
+    const minFracForText = (textArcR / coinR) / 0.96; // ≈ 0.908 for standard coin
+    if (contentFrac < minFracForText) {
+      console.info(
+        `contentFrac clamped ${contentFrac.toFixed(3)} → ${minFracForText.toFixed(3)} ` +
+        `to keep arc text (r=${Math.round(textArcR)}px) inside coin face`
+      );
+      contentFrac = minFracForText;
+    }
+  }
+
   // QC #18: Adaptive Mesh Density
   // Field zone needs fewer triangles than portrait and text zones.
   // We split rings into 3 zones based on radius:
