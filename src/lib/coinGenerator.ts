@@ -450,12 +450,22 @@ export async function generateCoinGeometry(
     let widths: number[] = [];
     let totalW = 0;
 
+    // Letter spacing — must be wide enough so adjacent letter STROKES don't merge.
+    // Stroke extends lineWidth/2 on each side of the glyph outline, so the
+    // horizontal "footprint" of a letter grows by lineWidth.  Letters need at
+    // least (lineWidth + small gap) of bare canvas between their natural
+    // measureText boxes to remain visually distinct.
+    //   lineWidth = fontSize × 0.15
+    //   spacing   = fontSize × 0.22  (= lineWidth + ~7% gap)
+    const letterSpacingFactor = 0.22;
+    const strokeFactor        = 0.15;
+
     while (fontSize >= minFontSize) {
       targetCtx.font = `${weight} ${fontSize}px "Trajan Pro", serif`;
       widths = [];
       totalW = 0;
       for (const ch of str) {
-        const w = targetCtx.measureText(ch).width + fontSize * 0.1;
+        const w = targetCtx.measureText(ch).width + fontSize * letterSpacingFactor;
         widths.push(w);
         totalW += w;
       }
@@ -467,15 +477,20 @@ export async function generateCoinGeometry(
     targetCtx.font = `${weight} ${fontSize}px "Trajan Pro", serif`;
     targetCtx.textAlign = 'center';
     targetCtx.textBaseline = 'middle';
-    // Stroke same color as fill — thickens letters without outlining them in dark.
+    // Stroke same color as fill — thickens thin Trajan serifs so they survive
+    // mesh sampling, but kept narrow so adjacent letters stay distinct.
     //
-    // WHY 0.35: Angular step at text arc with 512 segments ≈ 11px on the depth map.
-    // For a stroke to register on at least 2 consecutive mesh vertices (Nyquist),
-    // stroke width must be ≥ 2 × angular_step = 22px.
-    // 0.35 × fontSize(125px) = 43.75px → 3.9 vertices per stroke ✓ well above Nyquist.
-    // At 0.14 (old value) with old 82px font: 11.5px → 0.72 vertices per stroke ✗ aliased away.
+    // Two competing constraints:
+    //   1. Survival in mesh: stroke ≥ 2 × angular_step ≈ 22px (Nyquist)
+    //   2. Letter separation: stroke ≤ letter_spacing − 5px so adjacent
+    //      strokes don't overlap and merge letters into a wavy band.
+    //
+    // Trajan Pro Bold @ 123px has natural stem ≈ 18-20px. With stroke 0.15×
+    // (≈ 18px), effective stem ≈ 36px → 3.4 × angular step ✓, and adjacent
+    // letters with 0.22× spacing keep a clear ~9px gap. Old 0.35× stroke
+    // overflowed into neighbours and produced the wavy "merged" arc text.
     targetCtx.strokeStyle = `rgb(${g},${g},${g})`;
-    targetCtx.lineWidth = fontSize * 0.35;   // must be ≥ 2 × angular mesh step
+    targetCtx.lineWidth = fontSize * strokeFactor;
     targetCtx.lineJoin = 'round';
     targetCtx.lineCap  = 'round';
     targetCtx.fillStyle = `rgb(${g},${g},${g})`;
@@ -542,16 +557,12 @@ export async function generateCoinGeometry(
   // A text stroke thinner than 2 mesh-vertex spacings cannot be represented
   // faithfully — it either disappears or looks like a 1-cell ridge, not a letter.
   //
-  // We work in canvas-pixel space (procRes = 2048) and then compare against the
-  // Nyquist limit imposed by the mesh grid (safeGridResolution samples across r).
-  //   grid_spacing_px  = procRes / safeGridResolution   (canvas px per mesh vertex)
-  //   fontSize_px      = innerFacePx * 0.13 * textSize   (normal arc font size)
-  //   stroke_px        = fontSize_px * 0.35             (lineWidth factor in drawArcText)
-  //   Minimum safe     = 2 × angular_step_px (angular step at text arc radius)
-  //   angular_step_px  = 2π × textArcR / radialSegments
+  // EFFECTIVE stem width = Trajan Bold natural stem (~0.13 × fontSize) +
+  // canvas strokeText width (0.15 × fontSize) ≈ 0.28 × fontSize. This must be
+  // ≥ 2 × angular_step_px at the text arc radius (Nyquist).
   if ((topText || '').trim().length > 0 || (bottomText || '').trim().length > 0) {
-    const estimatedFontPx  = Math.max(coinR * 0.015, innerFacePx * 0.13 * textSize); // clamp to min font
-    const strokePx         = estimatedFontPx * 0.35;             // lineWidth factor (must be ≥ 2× angular step)
+    const estimatedFontPx  = Math.max(coinR * 0.015, innerFacePx * 0.13 * textSize);
+    const strokePx         = estimatedFontPx * 0.28;             // effective stem (natural + stroke)
     const angularStepPx    = (2 * Math.PI * textArcR) / segments; // px per angular vertex at text arc
     const gridSpacingPx    = angularStepPx; // re-use variable name for warning message
     if (strokePx < 2 * gridSpacingPx) {
