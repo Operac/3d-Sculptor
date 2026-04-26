@@ -1480,8 +1480,25 @@ export async function generateCoinGeometry(
 
     if (u < 0 || u >= procRes || v < 0 || v >= procRes) return 0;
 
-    // Lanczos-2 interpolation — preserves text/portrait edge crispness
-    let depth = sampleDepthLanczos(u, v);
+    // Sample selection:
+    //   • Text region  → NEAREST sampling. The textMask produced binary plateaus
+    //     (flat-topped, vertical-walled letters). Lanczos-2 has negative lobes
+    //     that RING at sharp depth transitions, smearing letter outlines into
+    //     the soft "wavy" look the user has been seeing. Nearest preserves the
+    //     plateau geometry exactly — every mesh vertex inside a letter gets the
+    //     full plateau depth, every vertex outside gets 0.
+    //   • Everything else → LANCZOS-2. Smooth portrait gradients benefit from
+    //     the higher-order interpolation; the ringing only matters for hard
+    //     binary edges.
+    const ui = Math.round(u);
+    const vi = Math.round(v);
+    const idx = vi * procRes + ui;
+    let depth: number;
+    if (textMask[idx] > 0) {
+      depth = depthMap[idx]; // nearest — keeps text plateau crisp
+    } else {
+      depth = sampleDepthLanczos(u, v);
+    }
 
     // QC #16: Prevent Z-fighting where text base meets field surface.
     // Any depth value > 0 but < 0.01mm above field creates coplanar
