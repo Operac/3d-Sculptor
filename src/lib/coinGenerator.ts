@@ -63,7 +63,7 @@ export const COIN_PRESET: CoinSettings = {
   rimHeight: 0.8,
   fieldRecess: 0.3,
   maxRelief: 1.5,        // resin: deeper relief for crisp detail
-  segments: 512,         // 512 segments → angular step 11px → text strokes 2.2× Nyquist
+  segments: 768,         // 768 segments → angular step 7.1px → even thin Trajan diagonals (12px) get 1.7× Nyquist
   gridResolution: 768,   // 768 → mesh samples depth every 2.7px → text strokes ≥ 3 vertices wide
   isDoubleFaced: true,
   showRim: true,
@@ -453,20 +453,23 @@ export async function generateCoinGeometry(
     let totalW = 0;
 
     // Letter spacing & stroke — calibrated for crisp, mesh-friendly capitals.
-    //   lineWidth = fontSize × 0.14   (moderate stroke — guarantees Nyquist survival)
-    //   spacing   = fontSize × 0.26   (= ~2× lineWidth + 17px gap — no merging)
+    //   lineWidth = fontSize × 0.05   (LIGHT reinforcement — preserves counters)
+    //   spacing   = fontSize × 0.18   (compact but no merging)
     //
-    // Sampling math @ fontSize 161px / 39mm coin / 512 segments:
-    //   angular step at textArcR ≈ 10.7px
-    //   natural Trajan stem      ≈ 26px (16% of font)
-    //   added stroke (×0.14)     ≈ 23px
-    //   effective stem           ≈ 49px = 4.6 × angular step — robust ✓
-    //   letter spacing           ≈ 42px → 19px gap after stroke widening ✓
+    // Sampling math @ fontSize 161px / 39mm coin / 768 segments:
+    //   angular step at textArcR ≈ 7.1px
+    //   natural Trajan Bold stem ≈ 26px (16% of font) → 3.7× Nyquist ✓
+    //   thin Trajan diagonals    ≈ 12px → 1.7× — risky alone
+    //   added stroke (×0.05)     ≈ 8px
+    //   effective stem (heavy)   ≈ 34px = 4.8× ✓
+    //   effective stem (thin)    ≈ 20px = 2.8× ✓
     //
-    // With butt/miter line geometry (set below), the wider stroke does NOT
-    // round off Trajan's serifs — letters stay angular and crisp.
-    const letterSpacingFactor = 0.26;
-    const strokeFactor        = 0.14;
+    // CRUCIAL: Thick stroke filled in the open counters of B, R, O, P, etc.,
+    // turning them into solid blobs. With only 0.05× reinforcement, the stem
+    // width grows by just 8px — Trajan's natural letterforms (open counters,
+    // sharp serifs, varying weights) are preserved.
+    const letterSpacingFactor = 0.18;
+    const strokeFactor        = 0.05;
 
     while (fontSize >= minFontSize) {
       targetCtx.font = `${weight} ${fontSize}px "Trajan Pro", serif`;
@@ -571,11 +574,11 @@ export async function generateCoinGeometry(
   // faithfully — it either disappears or looks like a 1-cell ridge, not a letter.
   //
   // EFFECTIVE stem width = Trajan Bold natural stem (~0.16 × fontSize) +
-  // canvas strokeText width (0.14 × fontSize) ≈ 0.30 × fontSize. This must be
+  // canvas strokeText width (0.05 × fontSize) ≈ 0.21 × fontSize. This must be
   // ≥ 2 × angular_step_px at the text arc radius (Nyquist).
   if ((topText || '').trim().length > 0 || (bottomText || '').trim().length > 0) {
     const estimatedFontPx  = Math.max(coinR * 0.015, innerFacePx * 0.17 * textSize);
-    const strokePx         = estimatedFontPx * 0.30;             // effective stem (natural + stroke)
+    const strokePx         = estimatedFontPx * 0.21;             // effective stem (natural + stroke)
     const angularStepPx    = (2 * Math.PI * textArcR) / segments; // px per angular vertex at text arc
     const gridSpacingPx    = angularStepPx; // re-use variable name for warning message
     if (strokePx < 2 * gridSpacingPx) {
@@ -674,19 +677,21 @@ export async function generateCoinGeometry(
   //
   // Why BINARY (not proportional to antialiased luminance):
   // The text canvas was drawn with antialiasing, so glyph edges have a band of
-  // partial-alpha pixels (lum ≈ 0.1 → 0.9). If we use `tLum × textDepthTarget`,
-  // those edge pixels get fractional depth — when the mesh samples them, the
-  // letter sides become a sloped ramp that reads as a "soft, wavy" outline at
-  // 512-segment resolution (the very complaint the user keeps reporting).
+  // partial-alpha pixels. If we use `tLum × textDepthTarget`, those edge pixels
+  // get fractional depth — when the mesh samples them, the letter sides become
+  // a sloped ramp that reads as a "soft, wavy" outline at 512-segment resolution.
   //
-  // Binary threshold @ 0.5: any pixel that is "more text than background" snaps
-  // to full text depth. The result is a crisp, plateau-shaped relief — letters
-  // read as flat-topped raised forms instead of fuzzy domes.
+  // CRITICAL THRESHOLD:
+  // Text glyphs are drawn at calibrated gray ≈ textLuminance (= textDepthTarget/0.6).
+  // For typical textDepthMm=0.8mm, maxRelief≈3mm → textLuminance ≈ 0.45.
+  // So letter BODIES sit at lum ~0.45, not ~1.0.  A naive threshold of 0.5 would
+  // cull the entire letter body!  We use 0.12 — well below the calibrated body
+  // brightness, well above near-zero antialias noise.
   const textDepthTarget = Math.min(1.0, textDepthMm / Math.max(0.1, maxRelief));
   const textMask = new Float32Array(procRes * procRes);
   for (let ti = 0; ti < procRes * procRes; ti++) {
     const tLum = (0.299 * textLayerRaw[ti * 4] + 0.587 * textLayerRaw[ti * 4 + 1] + 0.114 * textLayerRaw[ti * 4 + 2]) / 255;
-    if (tLum > 0.5) textMask[ti] = textDepthTarget; // binary — full depth, crisp edges
+    if (tLum > 0.12) textMask[ti] = textDepthTarget; // binary — flat plateau, sharp walls
   }
 
   // Composite antialiased text layer onto portrait using 'lighten' so portrait
