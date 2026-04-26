@@ -409,18 +409,24 @@ export async function generateCoinGeometry(
   const pxPerMm = coinR / realRadius;
 
   // Text arc radius: place text just inside the rim on every coin size.
-  // Using a fixed 17 mm clearance breaks on small coins (39 mm pocket coin has
-  // only 19.5 mm face radius — 17 mm clearance would push text to the centre).
-  // Instead: start from the inner face edge (minus rim) and step inward ~5%.
+  // The arc radius is the CENTRE of each character. Characters have height ≈
+  // fontSize × 0.70 (cap height), so their outer edge (toward rim) extends
+  // ~0.35 × fontSize beyond textArcR. edgeClearance must be at least that large
+  // so characters are fully contained inside the coin face.
+  //
+  // Initial font size = innerFacePx × 0.13, so half-cap-height ≈ 0.13 × 0.35 × innerFacePx
+  //                   = 0.0455 × innerFacePx.
+  // We use 0.09 × innerFacePx as edgeClearance — about 2× the minimum — giving
+  // a comfortable gap between the character tops and the rim wall.
   const rimWidthPx = (showRim ? rimWidth : 0) * pxPerMm;
   const innerFacePx = coinR - rimWidthPx;           // px radius of inner coin face
   // When rim is hidden we still need a meaningful edge clearance so text doesn't
   // crowd the coin boundary.  With rim shown the rim itself acts as the border;
-  // without rim we substitute a virtual border of ~8% of the coin radius (or at
+  // without rim we substitute a virtual border of ~11% of the coin radius (or at
   // least 6 mm on large formats) so text sits comfortably inside on all sizes.
-  const noRimBorder = Math.max(coinR * 0.11, 8 * pxPerMm);
-  const edgeClearance = showRim ? coinR * 0.05 : noRimBorder;
-  const textArcR = innerFacePx - edgeClearance;     // gap inside the face edge
+  const noRimBorder = Math.max(coinR * 0.11, 6 * pxPerMm);
+  const edgeClearance = showRim ? innerFacePx * 0.09 : noRimBorder;
+  const textArcR = innerFacePx - edgeClearance;     // centre of characters on arc
 
   const drawArcText = (text: string, centreAngleDeg: number, arcSpanDeg: number, flipBaseline: boolean, targetCtx: CanvasRenderingContext2D = ctx) => {
     if (!text || !text.trim()) return;
@@ -1278,20 +1284,25 @@ export async function generateCoinGeometry(
   //   tx = 0.5 + cos(angle) × rNorm_world × (0.5 × contentFrac)
   // So a depth-map pixel at radius R maps to world-space:
   //   rNorm_world = (R / coinR) / contentFrac
-  // If contentFrac is too small, the arc text (R ≈ textArcR, r-fraction ≈ 0.87)
-  // maps to rNorm_world > 1.0 — outside the coin — and getDepthAt() returns 0.
-  // The text becomes completely invisible in the mesh (only the chain-link outline
-  // of the medallion ring near the boundary is visible as bumps).
   //
-  // Fix: ensure contentFrac is always large enough so textArcR maps to
-  // rNorm_world ≤ 0.96 (safely inside the coin face).
-  //   Required: contentFrac ≥ textArcR / (coinR × 0.96)
-  {
-    const minFracForText = (textArcR / coinR) / 0.96; // ≈ 0.908 for standard coin
+  // If contentFrac is too small (bright portrait background triggers auto-zoom),
+  // the arc text maps to rNorm_world > 1.0 — outside the coin — and getDepthAt()
+  // returns 0.  Text is 100% invisible in the mesh.
+  //
+  // We anchor the clamp to the OUTER EDGE of the characters (textArcR + half
+  // cap-height), not just the centre, so characters are never partially clipped.
+  //   half cap-height ≈ initialFontSize × 0.35 = innerFacePx × 0.13 × 0.35
+  //   outerCharEdge   = textArcR + innerFacePx × 0.0455
+  //   Required: contentFrac ≥ (outerCharEdge / coinR) / 0.97
+  //             (0.97 = leave 3% gap before the feather zone at 0.985)
+  if ((topText || '').trim().length > 0 || (bottomText || '').trim().length > 0) {
+    const halfCapHeight    = innerFacePx * 0.13 * 0.35; // ≈ 43px at 39mm coin
+    const outerCharEdgePx  = textArcR + halfCapHeight;   // outermost px of characters
+    const minFracForText   = (outerCharEdgePx / coinR) / 0.97;
     if (contentFrac < minFracForText) {
       console.info(
         `contentFrac clamped ${contentFrac.toFixed(3)} → ${minFracForText.toFixed(3)} ` +
-        `to keep arc text (r=${Math.round(textArcR)}px) inside coin face`
+        `(arc text outer edge r=${Math.round(outerCharEdgePx)}px must map to world ≤ 0.97)`
       );
       contentFrac = minFracForText;
     }
