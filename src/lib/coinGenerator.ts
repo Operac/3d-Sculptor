@@ -414,10 +414,11 @@ export async function generateCoinGeometry(
   // ~0.35 × fontSize beyond textArcR. edgeClearance must be at least that large
   // so characters are fully contained inside the coin face.
   //
-  // Initial font size = innerFacePx × 0.13, so half-cap-height ≈ 0.13 × 0.35 × innerFacePx
-  //                   = 0.0455 × innerFacePx.
-  // We use 0.09 × innerFacePx as edgeClearance — about 2× the minimum — giving
-  // a comfortable gap between the character tops and the rim wall.
+  // Initial font size = innerFacePx × 0.15, so half-cap-height ≈ 0.15 × 0.35 × innerFacePx
+  //                   = 0.0525 × innerFacePx.
+  // We use 0.075 × innerFacePx as edgeClearance — ~1.4× the minimum — pulling
+  // the text outward toward the rim so it sits visually closer to the rim and
+  // farther from the medallion ring (matches the user's preferred layout).
   const rimWidthPx = (showRim ? rimWidth : 0) * pxPerMm;
   const innerFacePx = coinR - rimWidthPx;           // px radius of inner coin face
   // When rim is hidden we still need a meaningful edge clearance so text doesn't
@@ -425,7 +426,7 @@ export async function generateCoinGeometry(
   // without rim we substitute a virtual border of ~11% of the coin radius (or at
   // least 6 mm on large formats) so text sits comfortably inside on all sizes.
   const noRimBorder = Math.max(coinR * 0.11, 6 * pxPerMm);
-  const edgeClearance = showRim ? innerFacePx * 0.09 : noRimBorder;
+  const edgeClearance = showRim ? innerFacePx * 0.075 : noRimBorder;
   const textArcR = innerFacePx - edgeClearance;     // centre of characters on arc
 
   const drawArcText = (text: string, centreAngleDeg: number, arcSpanDeg: number, flipBaseline: boolean, targetCtx: CanvasRenderingContext2D = ctx) => {
@@ -443,9 +444,10 @@ export async function generateCoinGeometry(
     const maxArcLen = maxArcAngleRad * textArcR;
 
     // Start at the ideal font size then shrink until text fits within arcSpanDeg.
-    // 0.13 × innerFacePx ≈ 125px on a 39mm coin → 2.38mm physical — legible minimum for 3D print.
-    // (Old: min(0.10×innerFacePx, 0.08×coinR) → 82px = 1.56mm — too small.)
-    let fontSize = Math.round(innerFacePx * 0.13 * textSize);
+    // 0.15 × innerFacePx ≈ 142px on a 39mm coin → 2.70mm physical — comfortably
+    // legible on a 3D print and clearly readable in the rendered preview.
+    // (Old 0.13 → 123px = 2.34mm read as "small"; user requested bigger.)
+    let fontSize = Math.round(innerFacePx * 0.15 * textSize);
     const minFontSize = Math.round(coinR * 0.015); // never go below ~1.5% of radius
     let widths: number[] = [];
     let totalW = 0;
@@ -561,7 +563,7 @@ export async function generateCoinGeometry(
   // canvas strokeText width (0.15 × fontSize) ≈ 0.28 × fontSize. This must be
   // ≥ 2 × angular_step_px at the text arc radius (Nyquist).
   if ((topText || '').trim().length > 0 || (bottomText || '').trim().length > 0) {
-    const estimatedFontPx  = Math.max(coinR * 0.015, innerFacePx * 0.13 * textSize);
+    const estimatedFontPx  = Math.max(coinR * 0.015, innerFacePx * 0.15 * textSize);
     const strokePx         = estimatedFontPx * 0.28;             // effective stem (natural + stroke)
     const angularStepPx    = (2 * Math.PI * textArcR) / segments; // px per angular vertex at text arc
     const gridSpacingPx    = angularStepPx; // re-use variable name for warning message
@@ -606,7 +608,7 @@ export async function generateCoinGeometry(
     }
 
     // Anchor signature inside the medallion ring.
-    const autoRingR = textArcR - coinR * 0.10;
+    const autoRingR = textArcR - coinR * 0.13;
     const sigX = coinR + signatureOffsetX * autoRingR;
     const sigY = coinR + autoRingR * 0.72 + signatureOffsetY * autoRingR;
 
@@ -623,10 +625,11 @@ export async function generateCoinGeometry(
   // Gray level: same formula as text — luminance = (depthMm/maxRelief) / 0.6
   // For casting: ring at ~1.5mm sits clearly above the field but below portrait.
   if (medallionRingEnabled) {
-    // Auto-position: sit 10% of face radius inside the text arc so the ring
-    // always falls cleanly between the portrait and the text band, regardless
-    // of coin size or how much text is on the arc.
-    const ringR = textArcR - coinR * 0.10;
+    // Auto-position: sit 13% of face radius inside the text arc so the ring
+    // sits well below the (now-larger) text band, leaving an obvious visual
+    // gap between the ring and the characters and centring the text band more
+    // toward the rim — the layout the user requested.
+    const ringR = textArcR - coinR * 0.13;
     const targetNorm  = Math.min(1.0, medallionRingDepthMm / Math.max(0.1, maxRelief));
     const ringLum     = Math.min(1.0, targetNorm / 0.6);
     const g           = Math.round(ringLum * 255);
@@ -1307,7 +1310,7 @@ export async function generateCoinGeometry(
   //   Required: contentFrac ≥ (outerCharEdge / coinR) / 0.97
   //             (0.97 = leave 3% gap before the feather zone at 0.985)
   if ((topText || '').trim().length > 0 || (bottomText || '').trim().length > 0) {
-    const halfCapHeight    = innerFacePx * 0.13 * 0.35; // ≈ 43px at 39mm coin
+    const halfCapHeight    = innerFacePx * 0.15 * 0.35; // ≈ 50px at 39mm coin
     const outerCharEdgePx  = textArcR + halfCapHeight;   // outermost px of characters
     const minFracForText   = (outerCharEdgePx / coinR) / 0.97;
     if (contentFrac < minFracForText) {
