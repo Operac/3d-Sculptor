@@ -414,9 +414,9 @@ export async function generateCoinGeometry(
   // ~0.35 × fontSize beyond textArcR. edgeClearance must be at least that large
   // so characters are fully contained inside the coin face.
   //
-  // Initial font size = innerFacePx × 0.17, so half-cap-height ≈ 0.17 × 0.35 × innerFacePx
-  //                   = 0.0595 × innerFacePx.
-  // We use 0.085 × innerFacePx as edgeClearance — ~1.4× the minimum — pulling
+  // Initial font size = innerFacePx × 0.20, so half-cap-height ≈ 0.20 × 0.35 × innerFacePx
+  //                   = 0.07 × innerFacePx.
+  // We use 0.095 × innerFacePx as edgeClearance — ~1.4× the minimum — pulling
   // the text outward toward the rim so it sits visually closer to the rim and
   // farther from the medallion ring (matches the user's preferred layout).
   const rimWidthPx = (showRim ? rimWidth : 0) * pxPerMm;
@@ -426,7 +426,7 @@ export async function generateCoinGeometry(
   // without rim we substitute a virtual border of ~11% of the coin radius (or at
   // least 6 mm on large formats) so text sits comfortably inside on all sizes.
   const noRimBorder = Math.max(coinR * 0.11, 6 * pxPerMm);
-  const edgeClearance = showRim ? innerFacePx * 0.085 : noRimBorder;
+  const edgeClearance = showRim ? innerFacePx * 0.095 : noRimBorder;
   const textArcR = innerFacePx - edgeClearance;     // centre of characters on arc
 
   const drawArcText = (text: string, centreAngleDeg: number, arcSpanDeg: number, flipBaseline: boolean, targetCtx: CanvasRenderingContext2D = ctx) => {
@@ -444,32 +444,32 @@ export async function generateCoinGeometry(
     const maxArcLen = maxArcAngleRad * textArcR;
 
     // Start at the ideal font size then shrink until text fits within arcSpanDeg.
-    // 0.17 × innerFacePx ≈ 161px on a 39mm coin → 3.06mm physical — bold, very
-    // legible on a 3D print, dominates 3+ mesh vertices per stroke.
-    // (Iterated up from 0.13 → 0.15 → 0.17 as user kept asking for clearer text.)
-    let fontSize = Math.round(innerFacePx * 0.17 * textSize);
+    // 0.20 × innerFacePx ≈ 189px on a 39mm coin → 3.60mm physical — large, bold,
+    // dominates 4+ mesh vertices per stroke at 768 segments.
+    // (Iterated up from 0.13 → 0.15 → 0.17 → 0.20 as user kept asking for bigger.)
+    let fontSize = Math.round(innerFacePx * 0.20 * textSize);
     const minFontSize = Math.round(coinR * 0.015); // never go below ~1.5% of radius
     let widths: number[] = [];
     let totalW = 0;
 
     // Letter spacing & stroke — calibrated for crisp, mesh-friendly capitals.
-    //   lineWidth = fontSize × 0.05   (LIGHT reinforcement — preserves counters)
-    //   spacing   = fontSize × 0.18   (compact but no merging)
+    //   lineWidth = fontSize × 0.10   (visible bold reinforcement)
+    //   spacing   = fontSize × 0.22   (clear inter-letter gap)
     //
-    // Sampling math @ fontSize 161px / 39mm coin / 768 segments:
+    // Sampling math @ fontSize 189px / 39mm coin / 768 segments:
     //   angular step at textArcR ≈ 7.1px
-    //   natural Trajan Bold stem ≈ 26px (16% of font) → 3.7× Nyquist ✓
-    //   thin Trajan diagonals    ≈ 12px → 1.7× — risky alone
-    //   added stroke (×0.05)     ≈ 8px
-    //   effective stem (heavy)   ≈ 34px = 4.8× ✓
-    //   effective stem (thin)    ≈ 20px = 2.8× ✓
+    //   natural Trajan Bold stem ≈ 30px (16% of font) → 4.2× Nyquist ✓
+    //   added stroke (×0.10)     ≈ 19px
+    //   effective heavy stem     ≈ 49px = 6.9× ✓ (very robust)
+    //   effective thin diagonal  ≈ 14 + 19 = 33px = 4.6× ✓
+    //   counter width on "O"     ≈ 189 × 0.55 − 2×49 = 6px... still open
+    //   letter spacing           ≈ 42px → 23px gap after stroke ✓
     //
-    // CRUCIAL: Thick stroke filled in the open counters of B, R, O, P, etc.,
-    // turning them into solid blobs. With only 0.05× reinforcement, the stem
-    // width grows by just 8px — Trajan's natural letterforms (open counters,
-    // sharp serifs, varying weights) are preserved.
-    const letterSpacingFactor = 0.18;
-    const strokeFactor        = 0.05;
+    // 0.10 stroke is the sweet spot: visibly bold (text reads as confident
+    // capital weight) but doesn't fill in counters. With 0.05 the strokes
+    // were too delicate; with 0.14+ counters started to close up.
+    const letterSpacingFactor = 0.22;
+    const strokeFactor        = 0.10;
 
     while (fontSize >= minFontSize) {
       targetCtx.font = `${weight} ${fontSize}px "Trajan Pro", serif`;
@@ -574,11 +574,11 @@ export async function generateCoinGeometry(
   // faithfully — it either disappears or looks like a 1-cell ridge, not a letter.
   //
   // EFFECTIVE stem width = Trajan Bold natural stem (~0.16 × fontSize) +
-  // canvas strokeText width (0.05 × fontSize) ≈ 0.21 × fontSize. This must be
+  // canvas strokeText width (0.10 × fontSize) ≈ 0.26 × fontSize. This must be
   // ≥ 2 × angular_step_px at the text arc radius (Nyquist).
   if ((topText || '').trim().length > 0 || (bottomText || '').trim().length > 0) {
-    const estimatedFontPx  = Math.max(coinR * 0.015, innerFacePx * 0.17 * textSize);
-    const strokePx         = estimatedFontPx * 0.21;             // effective stem (natural + stroke)
+    const estimatedFontPx  = Math.max(coinR * 0.015, innerFacePx * 0.20 * textSize);
+    const strokePx         = estimatedFontPx * 0.26;             // effective stem (natural + stroke)
     const angularStepPx    = (2 * Math.PI * textArcR) / segments; // px per angular vertex at text arc
     const gridSpacingPx    = angularStepPx; // re-use variable name for warning message
     if (strokePx < 2 * gridSpacingPx) {
@@ -1337,7 +1337,7 @@ export async function generateCoinGeometry(
   //   Required: contentFrac ≥ (outerCharEdge / coinR) / 0.97
   //             (0.97 = leave 3% gap before the feather zone at 0.985)
   if ((topText || '').trim().length > 0 || (bottomText || '').trim().length > 0) {
-    const halfCapHeight    = innerFacePx * 0.17 * 0.35; // ≈ 56px at 39mm coin
+    const halfCapHeight    = innerFacePx * 0.20 * 0.35; // ≈ 66px at 39mm coin
     const outerCharEdgePx  = textArcR + halfCapHeight;   // outermost px of characters
     const minFracForText   = (outerCharEdgePx / coinR) / 0.97;
     if (contentFrac < minFracForText) {
