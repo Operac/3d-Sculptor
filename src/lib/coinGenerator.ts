@@ -414,9 +414,9 @@ export async function generateCoinGeometry(
   // ~0.35 × fontSize beyond textArcR. edgeClearance must be at least that large
   // so characters are fully contained inside the coin face.
   //
-  // Initial font size = innerFacePx × 0.15, so half-cap-height ≈ 0.15 × 0.35 × innerFacePx
-  //                   = 0.0525 × innerFacePx.
-  // We use 0.075 × innerFacePx as edgeClearance — ~1.4× the minimum — pulling
+  // Initial font size = innerFacePx × 0.17, so half-cap-height ≈ 0.17 × 0.35 × innerFacePx
+  //                   = 0.0595 × innerFacePx.
+  // We use 0.085 × innerFacePx as edgeClearance — ~1.4× the minimum — pulling
   // the text outward toward the rim so it sits visually closer to the rim and
   // farther from the medallion ring (matches the user's preferred layout).
   const rimWidthPx = (showRim ? rimWidth : 0) * pxPerMm;
@@ -426,7 +426,7 @@ export async function generateCoinGeometry(
   // without rim we substitute a virtual border of ~11% of the coin radius (or at
   // least 6 mm on large formats) so text sits comfortably inside on all sizes.
   const noRimBorder = Math.max(coinR * 0.11, 6 * pxPerMm);
-  const edgeClearance = showRim ? innerFacePx * 0.075 : noRimBorder;
+  const edgeClearance = showRim ? innerFacePx * 0.085 : noRimBorder;
   const textArcR = innerFacePx - edgeClearance;     // centre of characters on arc
 
   const drawArcText = (text: string, centreAngleDeg: number, arcSpanDeg: number, flipBaseline: boolean, targetCtx: CanvasRenderingContext2D = ctx) => {
@@ -444,29 +444,29 @@ export async function generateCoinGeometry(
     const maxArcLen = maxArcAngleRad * textArcR;
 
     // Start at the ideal font size then shrink until text fits within arcSpanDeg.
-    // 0.15 × innerFacePx ≈ 142px on a 39mm coin → 2.70mm physical — comfortably
-    // legible on a 3D print and clearly readable in the rendered preview.
-    // (Old 0.13 → 123px = 2.34mm read as "small"; user requested bigger.)
-    let fontSize = Math.round(innerFacePx * 0.15 * textSize);
+    // 0.17 × innerFacePx ≈ 161px on a 39mm coin → 3.06mm physical — bold, very
+    // legible on a 3D print, dominates 3+ mesh vertices per stroke.
+    // (Iterated up from 0.13 → 0.15 → 0.17 as user kept asking for clearer text.)
+    let fontSize = Math.round(innerFacePx * 0.17 * textSize);
     const minFontSize = Math.round(coinR * 0.015); // never go below ~1.5% of radius
     let widths: number[] = [];
     let totalW = 0;
 
-    // Letter spacing — must be wide enough so adjacent letter STROKES don't merge.
-    // Stroke extends lineWidth/2 on each side of the glyph outline, so the
-    // horizontal "footprint" of a letter grows by lineWidth.  Letters need at
-    // least (lineWidth + small gap) of bare canvas between their natural
-    // measureText boxes to remain visually distinct.
-    //   lineWidth = fontSize × 0.08   (light reinforcement, preserves serifs)
-    //   spacing   = fontSize × 0.20   (≈ 2.5× lineWidth — clear gaps between glyphs)
+    // Letter spacing & stroke — calibrated for crisp, mesh-friendly capitals.
+    //   lineWidth = fontSize × 0.14   (moderate stroke — guarantees Nyquist survival)
+    //   spacing   = fontSize × 0.26   (= ~2× lineWidth + 17px gap — no merging)
     //
-    // Why 0.08 (not 0.15)?  Trajan Pro Bold @ 142px already has a natural stem
-    // of ~22-25px (~16-18% of fontSize).  Adding 0.15× (=21px) on top doubled
-    // every stroke, fused the serifs, and turned the arc into a wavy band.  An
-    // 0.08× (≈11px) reinforcement just thickens the thin diagonals enough to
-    // survive mesh sampling without obliterating the letterforms.
-    const letterSpacingFactor = 0.20;
-    const strokeFactor        = 0.08;
+    // Sampling math @ fontSize 161px / 39mm coin / 512 segments:
+    //   angular step at textArcR ≈ 10.7px
+    //   natural Trajan stem      ≈ 26px (16% of font)
+    //   added stroke (×0.14)     ≈ 23px
+    //   effective stem           ≈ 49px = 4.6 × angular step — robust ✓
+    //   letter spacing           ≈ 42px → 19px gap after stroke widening ✓
+    //
+    // With butt/miter line geometry (set below), the wider stroke does NOT
+    // round off Trajan's serifs — letters stay angular and crisp.
+    const letterSpacingFactor = 0.26;
+    const strokeFactor        = 0.14;
 
     while (fontSize >= minFontSize) {
       targetCtx.font = `${weight} ${fontSize}px "Trajan Pro", serif`;
@@ -571,11 +571,11 @@ export async function generateCoinGeometry(
   // faithfully — it either disappears or looks like a 1-cell ridge, not a letter.
   //
   // EFFECTIVE stem width = Trajan Bold natural stem (~0.16 × fontSize) +
-  // canvas strokeText width (0.08 × fontSize) ≈ 0.24 × fontSize. This must be
+  // canvas strokeText width (0.14 × fontSize) ≈ 0.30 × fontSize. This must be
   // ≥ 2 × angular_step_px at the text arc radius (Nyquist).
   if ((topText || '').trim().length > 0 || (bottomText || '').trim().length > 0) {
-    const estimatedFontPx  = Math.max(coinR * 0.015, innerFacePx * 0.15 * textSize);
-    const strokePx         = estimatedFontPx * 0.24;             // effective stem (natural + stroke)
+    const estimatedFontPx  = Math.max(coinR * 0.015, innerFacePx * 0.17 * textSize);
+    const strokePx         = estimatedFontPx * 0.30;             // effective stem (natural + stroke)
     const angularStepPx    = (2 * Math.PI * textArcR) / segments; // px per angular vertex at text arc
     const gridSpacingPx    = angularStepPx; // re-use variable name for warning message
     if (strokePx < 2 * gridSpacingPx) {
@@ -670,12 +670,23 @@ export async function generateCoinGeometry(
   textLayerCtx.drawImage(textCanvas2x, 0, 0, procRes * 2, procRes * 2, 0, 0, procRes, procRes);
   const textLayerRaw = textLayerCtx.getImageData(0, 0, procRes, procRes).data;
 
-  // Build float mask: 0 = no text, >0 = normalised target depth for that pixel
+  // Build float mask: 0 = no text, >0 = target depth for that pixel.
+  //
+  // Why BINARY (not proportional to antialiased luminance):
+  // The text canvas was drawn with antialiasing, so glyph edges have a band of
+  // partial-alpha pixels (lum ≈ 0.1 → 0.9). If we use `tLum × textDepthTarget`,
+  // those edge pixels get fractional depth — when the mesh samples them, the
+  // letter sides become a sloped ramp that reads as a "soft, wavy" outline at
+  // 512-segment resolution (the very complaint the user keeps reporting).
+  //
+  // Binary threshold @ 0.5: any pixel that is "more text than background" snaps
+  // to full text depth. The result is a crisp, plateau-shaped relief — letters
+  // read as flat-topped raised forms instead of fuzzy domes.
   const textDepthTarget = Math.min(1.0, textDepthMm / Math.max(0.1, maxRelief));
   const textMask = new Float32Array(procRes * procRes);
   for (let ti = 0; ti < procRes * procRes; ti++) {
     const tLum = (0.299 * textLayerRaw[ti * 4] + 0.587 * textLayerRaw[ti * 4 + 1] + 0.114 * textLayerRaw[ti * 4 + 2]) / 255;
-    if (tLum > 0.08) textMask[ti] = tLum * textDepthTarget; // proportional text depth
+    if (tLum > 0.5) textMask[ti] = textDepthTarget; // binary — full depth, crisp edges
   }
 
   // Composite antialiased text layer onto portrait using 'lighten' so portrait
@@ -1321,7 +1332,7 @@ export async function generateCoinGeometry(
   //   Required: contentFrac ≥ (outerCharEdge / coinR) / 0.97
   //             (0.97 = leave 3% gap before the feather zone at 0.985)
   if ((topText || '').trim().length > 0 || (bottomText || '').trim().length > 0) {
-    const halfCapHeight    = innerFacePx * 0.15 * 0.35; // ≈ 50px at 39mm coin
+    const halfCapHeight    = innerFacePx * 0.17 * 0.35; // ≈ 56px at 39mm coin
     const outerCharEdgePx  = textArcR + halfCapHeight;   // outermost px of characters
     const minFracForText   = (outerCharEdgePx / coinR) / 0.97;
     if (contentFrac < minFracForText) {
