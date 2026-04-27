@@ -85,7 +85,7 @@ export const COIN_PRESET: CoinSettings = {
    topTextSpan: 200,
    bottomText: '',
    bottomTextSpan: 100,
-   textSize: 1.0,
+   textSize: 2.0,
    textDepthMm: 1.0,      // pocket coin spec: 0.8–1.2 mm shallow relief (mid value)
    textFont: 'bold',
    signatureText: '',
@@ -1986,10 +1986,10 @@ export async function generateCoinGeometry(
             // root cause of "no text appears".
             merged.clearGroups();
             const coinIndexCount = geometry.index ? geometry.index.count : 0;
-            // Front material index: coin's first group (always front face)
-            const frontMatIdx = geometry.groups[0]?.materialIndex ?? 0;
-            // Back material index: coin's last group (back face if double-sided, else same as front)
-            const backMatIdx  = geometry.groups[geometry.groups.length - 1]?.materialIndex ?? frontMatIdx;
+            // Front material index: face material (typically group 1)
+            const frontMatIdx = geometry.groups[1]?.materialIndex ?? 1;
+            // Back material index: back material (typically group 2)
+            const backMatIdx  = geometry.groups[2]?.materialIndex ?? 2;
             for (const grp of geometry.groups) {
               merged.addGroup(grp.start, grp.count, grp.materialIndex);
             }

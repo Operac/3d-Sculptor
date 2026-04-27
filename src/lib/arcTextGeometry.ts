@@ -32,10 +32,17 @@ let fontLoadPromise: Promise<opentype.Font> | null = null;
 export async function loadTrajanFont(): Promise<opentype.Font> {
   if (cachedFont) return cachedFont;
   if (fontLoadPromise) return fontLoadPromise;
-  fontLoadPromise = opentype.load('/fonts/TrajanPro-Bold.ttf').then((font) => {
-    cachedFont = font;
-    return font;
-  });
+  fontLoadPromise = fetch('/fonts/TrajanPro-Bold.ttf')
+    .then(response => {
+      if (!response.ok) throw new Error(`Failed to fetch font: ${response.status}`);
+      return response.arrayBuffer();
+    })
+    .then(buffer => opentype.parse(buffer))
+    .then((font) => {
+      console.log('Trajan font loaded successfully:', font.names.fontFamily);
+      cachedFont = font;
+      return font;
+    });
   return fontLoadPromise;
 }
 
