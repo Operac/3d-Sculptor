@@ -84,7 +84,7 @@ export default function App() {
 
   const resetSettings = () => {
     if (settings.diameter === 425) setSettings(LARGE_PLAQUE_PRESET);
-    else if (settings.diameter === 39 && settings.baseHeight === 1.5) setSettings(POCKET_2_PRESET);
+    else if (settings.diameter === 39 && settings.material.type === 'silver') setSettings(POCKET_2_PRESET);
     else if (settings.type === 'coin') setSettings(COIN_PRESET);
     else setSettings(PLAQUE_PRESET);
   };
@@ -355,7 +355,7 @@ function SettingsPanel({
         <div className="grid grid-cols-2 gap-2">
           <button
             onClick={() => setPreset('coin')}
-            className={`py-3 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all flex flex-col items-center gap-1 border ${settings.type === 'coin' && settings.diameter !== 425 && !(settings.diameter === 39 && settings.baseHeight === 1.5) ? 'bg-white/10 border-white/30 text-white shadow-lg' : 'bg-white/[0.03] border-white/[0.06] text-neutral-500 hover:text-neutral-300 hover:border-white/15'}`}
+            className={`py-3 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all flex flex-col items-center gap-1 border ${settings.type === 'coin' && settings.diameter !== 425 && !(settings.diameter === 39 && settings.material.type === 'silver') ? 'bg-white/10 border-white/30 text-white shadow-lg' : 'bg-white/[0.03] border-white/[0.06] text-neutral-500 hover:text-neutral-300 hover:border-white/15'}`}
           >
             <span className="text-lg">🪙</span>
             <span>Pocket Coin</span>
@@ -379,7 +379,7 @@ function SettingsPanel({
           </button>
           <button
             onClick={() => setPreset('pocket-2')}
-            className={`py-3 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all flex flex-col items-center gap-1 border ${settings.diameter === 39 && settings.baseHeight === 1.5 ? 'bg-white/10 border-white/30 text-white shadow-lg' : 'bg-white/[0.03] border-white/[0.06] text-neutral-500 hover:text-neutral-300 hover:border-white/15'}`}
+            className={`py-3 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all flex flex-col items-center gap-1 border ${settings.diameter === 39 && settings.material.type === 'silver' ? 'bg-white/10 border-white/30 text-white shadow-lg' : 'bg-white/[0.03] border-white/[0.06] text-neutral-500 hover:text-neutral-300 hover:border-white/15'}`}
           >
             <span className="text-lg">🎖️</span>
             <span>Replica Pocket</span>
@@ -388,7 +388,7 @@ function SettingsPanel({
         </div>
 
         {/* Replica Pocket Coin info card */}
-        {settings.diameter === 39 && settings.baseHeight === 1.5 && (
+        {settings.diameter === 39 && settings.material.type === 'silver' && (
           <div className="mt-4 p-4 bg-white/5 rounded-xl border border-white/10 space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 text-white">
