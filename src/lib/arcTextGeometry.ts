@@ -107,12 +107,19 @@ export function buildFlatTextGeometry(
     const shapes = openTypePathToShapes(otPath);
     if (shapes.length === 0) { xCursor += widths[i]; continue; }
 
+    // Small chamfer ≈ 6% of font size — matches Blender's bevel_depth=0.1
+    // for ~1.5mm text.  Softens the 90° corners so edges catch light cleanly
+    // (otherwise sharp edges read as harsh/aliased in screen-space rendering).
+    const bevelSizeMm = Math.min(fontSizeMm * 0.06, textDepthMm * 0.25);
     const perCharGeoms: THREE.BufferGeometry[] = [];
     for (const shape of shapes) {
       const g = new THREE.ExtrudeGeometry(shape, {
-        depth: textDepthMm,
-        bevelEnabled: false,
-        curveSegments: 8,
+        depth: textDepthMm - bevelSizeMm * 2,    // depth+bevels = textDepthMm total
+        bevelEnabled: true,
+        bevelThickness: bevelSizeMm,             // depth of the bevel inward
+        bevelSize:      bevelSizeMm,             // distance the bevel extends out from the shape
+        bevelSegments:  3,                        // bevel curve smoothness
+        curveSegments:  20,                       // glyph bezier resolution — was 8 (too faceted)
       });
       perCharGeoms.push(g);
     }
@@ -123,7 +130,8 @@ export function buildFlatTextGeometry(
     // No Y-scale: openTypePathToShapes() already negates Y at source so the
     // glyph is Y-up with CCW outer winding → outward normals (no culling).
     // Position: glyph origin (after Y-negation) is at left edge / baseline.
-    charGeo.translate(xCursor, baselineY, faceZ);
+    // Lift by bevelSize so the bevel sits ON the face plane (not below it).
+    charGeo.translate(xCursor, baselineY, faceZ + bevelSizeMm);
     charGeoms.push(charGeo);
 
     xCursor += widths[i];
@@ -235,12 +243,23 @@ export function buildArcTextGeometry(
     // openTypePathToShapes() already negates Y at source so glyphs are Y-up
     // with proper CCW outer winding → ExtrudeGeometry produces correct
     // OUTWARD normals (no front-face culling).
+    //
+    // Quality settings (matched to Blender's TEXT_RELIEF + bevel_depth idiom):
+    //   • curveSegments: 20 — Trajan glyphs have many subtle curves; 6 gave
+    //     a faceted/pixelated appearance the user complained about.
+    //   • bevel: small chamfer (~6% of cap-height) so edges catch light
+    //     properly. Without it, perfectly-vertical walls read as harsh /
+    //     aliased in the renderer because there is no specular falloff.
+    const bevelSizeMm = Math.min(fontSizeMm * 0.06, textDepthMm * 0.25);
     const perCharGeoms: THREE.BufferGeometry[] = [];
     for (const shape of shapes) {
       const g = new THREE.ExtrudeGeometry(shape, {
-        depth: textDepthMm,
-        bevelEnabled: false,
-        curveSegments: 6, // glyph beziers — 6 is plenty for letter-scale curves
+        depth: textDepthMm - bevelSizeMm * 2,    // total height = depth + 2 × bevel
+        bevelEnabled: true,
+        bevelThickness: bevelSizeMm,
+        bevelSize:      bevelSizeMm,
+        bevelSegments:  3,
+        curveSegments:  20,
       });
       perCharGeoms.push(g);
     }
@@ -258,11 +277,13 @@ export function buildArcTextGeometry(
     //   At bottom centre (charAngle = -π/2): rotation = -π → upside-down ✓
     charGeo.rotateZ(charAngle - Math.PI / 2);
 
-    // Translate to the position on the arc circle (XY plane, at faceZ).
+    // Translate to the position on the arc circle (XY plane).  Lift Z by
+    // bevelSize so the bevel sits ON the face plane instead of below it
+    // (otherwise the bottom bevel ramp would dip into the coin field).
     charGeo.translate(
       arcRadius * Math.cos(charAngle),
       arcRadius * Math.sin(charAngle),
-      faceZ,
+      faceZ + bevelSizeMm,
     );
 
     charGeoms.push(charGeo);
