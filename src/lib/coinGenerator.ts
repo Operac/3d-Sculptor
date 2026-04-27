@@ -1910,6 +1910,8 @@ export async function generateCoinGeometry(
             // Mirror X and Z: applyMatrix4 with diag(-1,1,-1) — winding flip
             // below restores outward normals after the mirror.
             back.applyMatrix4(new THREE.Matrix4().makeScale(-1, 1, -1));
+            // Translate to match the back coin position
+            back.translate(0, 0, -2 * zField);
             // ExtrudeGeometry is non-indexed at this point.  Flip winding by
             // swapping every other vertex pair in the position array.
             const pos = back.attributes.position;
@@ -1921,6 +1923,13 @@ export async function generateCoinGeometry(
                   arr[i + 3 + j] = arr[i + 6 + j];
                   arr[i + 6 + j] = t;
                 }
+              }
+              pos.needsUpdate = true;
+            }
+            back.computeVertexNormals();
+            backTextGeoms.push(back);
+          }
+        }
               }
               pos.needsUpdate = true;
             }
@@ -1952,10 +1961,11 @@ export async function generateCoinGeometry(
               if (!coinAttrs.has(key)) g.deleteAttribute(key);
             }
             g = mergeVertices(g, 1e-4);
+            g.index = null; // Make non-indexed for merge
             g.computeVertexNormals();
-            const idxCount = g.index ? g.index.count : 0;
-            frontTextIndexCount += idxCount;
-            console.info(`  front text geo ${i}: ${g.attributes.position.count} verts, ${idxCount/3} tris`);
+            const vertCount = g.attributes.position.count;
+            frontTextIndexCount += vertCount / 3; // Now triangles, not indices
+            console.info(`  front text geo ${i}: ${vertCount} verts, ${vertCount/9} tris`);
             cleanFront.push(g);
           }
           for (let i = 0; i < backTextGeoms.length; i++) {
@@ -1986,10 +1996,9 @@ export async function generateCoinGeometry(
             // root cause of "no text appears".
             merged.clearGroups();
             const coinIndexCount = geometry.index ? geometry.index.count : 0;
-            // Front material index: face material (typically group 1)
-            const frontMatIdx = geometry.groups[1]?.materialIndex ?? 1;
-            // Back material index: back material (typically group 2)
-            const backMatIdx  = geometry.groups[2]?.materialIndex ?? 2;
+            // Material indices depend on useSeparateMaterials
+            const frontMatIdx = settings.useSeparateMaterials ? (geometry.groups[1]?.materialIndex ?? 1) : 0;
+            const backMatIdx  = settings.useSeparateMaterials ? (geometry.groups[2]?.materialIndex ?? 2) : 0;
             for (const grp of geometry.groups) {
               merged.addGroup(grp.start, grp.count, grp.materialIndex);
             }
