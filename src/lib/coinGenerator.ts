@@ -56,58 +56,58 @@ export interface CoinSettings {
 }
 
 export const COIN_PRESET: CoinSettings = {
-  type: 'coin',
-  reliefStyle: 'elevated',
-  diameter: 39,
-  // Pocket coin spec (foundry doc V1):
-  //   • Diameter 38–40 mm  (we ship 39 — within range)
-  //   • Thickness 3–4 mm max (must fit in standard wallet)
-  //     → baseHeight 2.0 + rimHeight 1.0 = 3.0 mm overall ✓
-  //   • Text Trajan Bold, 3–4 mm letter height min, 0.8–1.2 mm relief (shallow for pocket wear)
-  //     → fontSize factor 0.20 × innerFaceMm (=18.3) = 3.7 mm ✓
-  //     → textDepthMm 1.0 mm = mid of 0.8–1.2 ✓
-  baseHeight: 2.0,       // resin: thicker base = stronger print
-  rimWidth: 1.2,
-  rimHeight: 1.0,        // pocket coin: modest rim, total thickness 3.0 mm (spec ≤ 4 mm)
-  fieldRecess: 0.3,
-  maxRelief: 1.5,        // resin: deeper relief for crisp detail
-  segments: 768,         // 768 segments → angular step 7.1px → even thin Trajan diagonals (12px) get 1.7× Nyquist
-  gridResolution: 768,   // 768 → mesh samples depth every 2.7px → text strokes ≥ 3 vertices wide
-  isDoubleFaced: true,
-  showRim: true,
-  surfaceNoise: 0.0,     // resin: off — resin captures real surface texture
-  imageOffsetX: 0,
-  imageOffsetY: 0,
-  imageContrast: 1.0,
-  imageBrightness: 0.0,
-  invertImage: false,
-  topText: '',
-  topTextSpan: 200,
-  bottomText: '',
-  bottomTextSpan: 100,
-  textSize: 1.0,
-  textDepthMm: 1.0,      // pocket coin spec: 0.8–1.2 mm shallow relief (mid value)
-  textFont: 'bold',
-  signatureText: '',
-  signatureFont: 'great-vibes',
-  signatureSize: 1.0,
-  signatureOffsetX: 0,
-  signatureOffsetY: 0,
-  medallionRingEnabled: false,
-  medallionRingRadius: 0.62,
-  medallionRingWidthMm: 1.0,
-  medallionRingDepthMm: 1.5,
-  material: {
-    type: 'gold',
-    metallic: 0.9,
-    roughness: 0.2,
-    color: '#FFD700',
-  },
-  useSeparateMaterials: false,
-  rimMaterial: { type: 'gold', metallic: 0.9, roughness: 0.2, color: '#FFD700' },
-  faceMaterial: { type: 'gold', metallic: 0.9, roughness: 0.2, color: '#FFD700' },
-  backMaterial: { type: 'gold', metallic: 0.9, roughness: 0.2, color: '#FFD700' },
-};
+   type: 'coin',
+   reliefStyle: 'elevated',
+   diameter: 39,
+   // Pocket coin spec (foundry doc V1):
+   //   • Diameter 38–40 mm  (we ship 39 — within range)
+   //   • Thickness 3–4 mm max (must fit in standard wallet)
+   //     → baseHeight 2.0 + rimHeight 1.0 = 3.0 mm overall ✓
+   //   • Text Trajan Bold, 3–4 mm letter height min, 0.8–1.2 mm relief (shallow for pocket wear)
+   //     → fontSize factor 0.20 × innerFaceMm (=18.3) = 3.7 mm ✓
+   //     → textDepthMm 1.0 mm = mid of 0.8–1.2 ✓
+   baseHeight: 2.0,       // resin: thicker base = stronger print
+   rimWidth: 1.2,
+   rimHeight: 1.0,        // pocket coin: modest rim, total thickness 3.0 mm (spec ≤ 4 mm)
+   fieldRecess: 0.3,
+   maxRelief: 1.5,        // resin: deeper relief for crisp detail
+   segments: 768,         // 768 segments → angular step 7.1px → even thin Trajan diagonals (12px) get 1.7× Nyquist
+   gridResolution: 768,   // 768 → mesh samples depth every 2.7px → text strokes ≥ 3 vertices wide
+   isDoubleFaced: true,
+   showRim: true,
+   surfaceNoise: 0.0,     // resin: off — resin captures real surface texture
+   imageOffsetX: 0,
+   imageOffsetY: 0,
+   imageContrast: 1.0,
+   imageBrightness: 0.0,
+   invertImage: false,
+   topText: 'EXAMPLE',
+   topTextSpan: 200,
+   bottomText: '',
+   bottomTextSpan: 100,
+   textSize: 1.0,
+   textDepthMm: 1.0,      // pocket coin spec: 0.8–1.2 mm shallow relief (mid value)
+   textFont: 'bold',
+   signatureText: '',
+   signatureFont: 'great-vibes',
+   signatureSize: 1.0,
+   signatureOffsetX: 0,
+   signatureOffsetY: 0,
+   medallionRingEnabled: false,
+   medallionRingRadius: 0.62,
+   medallionRingWidthMm: 1.0,
+   medallionRingDepthMm: 1.5,
+   material: {
+     type: 'gold',
+     metallic: 0.9,
+     roughness: 0.2,
+     color: '#FFD700',
+   },
+   useSeparateMaterials: false,
+   rimMaterial: { type: 'gold', metallic: 0.9, roughness: 0.2, color: '#FFD700' },
+   faceMaterial: { type: 'gold', metallic: 0.9, roughness: 0.2, color: '#FFD700' },
+   backMaterial: { type: 'gold', metallic: 0.9, roughness: 0.2, color: '#FFD700' },
+ };
 
 export const PLAQUE_PRESET: CoinSettings = {
   type: 'plaque',
@@ -422,15 +422,15 @@ export async function generateCoinGeometry(
   ctx2x.imageSmoothingEnabled = true;
   ctx2x.imageSmoothingQuality = 'high';
 
-  // Renders topText on the 10→2 o'clock arc and bottomText on the 7→5 o'clock arc.
-  // Gray level is calibrated so the text relief matches textDepthMm after blending.
-  //
-  // Depth blend formula: depth = aiDepth*0.4 + luminance*0.6
-  // For text pixels, aiDepth ≈ 0 (AI sees no 3D in a rendered glyph).
-  // So: luminance needed = (textDepthMm/maxRelief) / 0.6
-  const coinR = procRes / 2;
-  const realRadius = diameter / 2; // mm
-  const pxPerMm = coinR / realRadius;
+   // Renders topText on the 10→2 o'clock arc and bottomText on the 7→5 o'clock arc.
+   // Gray level is calibrated so the text relief matches textDepthMm after blending.
+   //
+   // Depth blend formula: depth = aiDepth*0.4 + luminance*0.6
+   // For text pixels, aiDepth ≈ 0 (AI sees no 3D in a rendered glyph).
+   // So: luminance needed = (textDepthMm/maxRelief) / 0.6
+   const coinR = procRes / 2;
+   const realRadius = diameter / 2; // mm
+   const pxPerMm = coinR / realRadius;
 
   // Text arc radius: place text just inside the rim on every coin size.
   // The arc radius is the CENTRE of each character. Characters have height ≈
