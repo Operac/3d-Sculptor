@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { buildArcTextGeometry, buildFlatTextGeometry, loadTrajanFont } from './arcTextGeometry';
+import { loadTrajanFont, buildArcTextGeometry, buildFlatTextGeometry } from './arcTextGeometry';
+
 
 export type ModelType = 'coin' | 'plaque';
 export type ReliefStyle = 'elevated' | 'embedded' | 'emboss';
@@ -87,7 +88,7 @@ export const COIN_PRESET: CoinSettings = {
    bottomTextSpan: 100,
    textSize: 2.0,
    textDepthMm: 1.0,      // pocket coin spec: 0.8–1.2 mm shallow relief (mid value)
-   textFont: 'bold',
+   textFont: 'semibold',
    signatureText: '',
    signatureFont: 'great-vibes',
    signatureSize: 1.0,
@@ -323,11 +324,8 @@ export async function generateCoinGeometry(
   const zField = baseHeight - fieldRecess;
   const zRim = showRim ? baseHeight + rimHeight : zField;
 
-  // Kick off Trajan font load in parallel with AI depth — no extra wall time.
-  const fontPromise = loadTrajanFont().catch((e) => {
-    console.warn('Trajan font load failed; arc text geometry will be skipped.', e);
-    return null;
-  });
+  // Start loading Trajan Pro font for vector text (cached after first load)
+  const fontPromise = loadTrajanFont();
 
   // 1. Get AI Depth Data
   if (onProgress) onProgress("Initializing Image Data...");
@@ -413,7 +411,7 @@ export async function generateCoinGeometry(
   // QC #9: Render text at 2x on an offscreen canvas, then downscale
   // back to procRes with LANCZOS-quality smoothing. This gives subpixel
   // antialiasing on diagonal strokes — eliminates canvas aliasing that
-  // survives into the mesh as stepped geometry on letter edges.
+  // survives into the mesh as stepped geometry.
   const textCanvas2x = document.createElement('canvas');
   textCanvas2x.width  = procRes * 2;
   textCanvas2x.height = procRes * 2;
@@ -422,88 +420,42 @@ export async function generateCoinGeometry(
   ctx2x.imageSmoothingEnabled = true;
   ctx2x.imageSmoothingQuality = 'high';
 
-   // Renders topText on the 10→2 o'clock arc and bottomText on the 7→5 o'clock arc.
-   // Gray level is calibrated so the text relief matches textDepthMm after blending.
-   //
-   // Depth blend formula: depth = aiDepth*0.4 + luminance*0.6
-   // For text pixels, aiDepth ≈ 0 (AI sees no 3D in a rendered glyph).
-   // So: luminance needed = (textDepthMm/maxRelief) / 0.6
-   const coinR = procRes / 2;
-   const realRadius = diameter / 2; // mm
-   const pxPerMm = coinR / realRadius;
-
-  // Text arc radius: place text just inside the rim on every coin size.
-  // The arc radius is the CENTRE of each character. Characters have height ≈
-  // fontSize × 0.70 (cap height), so their outer edge (toward rim) extends
-  // ~0.35 × fontSize beyond textArcR. edgeClearance must be at least that large
-  // so characters are fully contained inside the coin face.
+  // Renders topText on the 10→2 o'clock arc and bottomText on the 7→5 o'clock arc.
+  // Gray level is calibrated so the text relief matches textDepthMm after blending.
   //
-  // Initial font size = innerFacePx × 0.20, so half-cap-height ≈ 0.20 × 0.35 × innerFacePx
-  //                   = 0.07 × innerFacePx.
-  // We use 0.095 × innerFacePx as edgeClearance — ~1.4× the minimum — pulling
-  // the text outward toward the rim so it sits visually closer to the rim and
-  // farther from the medallion ring (matches the user's preferred layout).
-  const rimWidthPx = (showRim ? rimWidth : 0) * pxPerMm;
-  const innerFacePx = coinR - rimWidthPx;           // px radius of inner coin face
-  // When rim is hidden we still need a meaningful edge clearance so text doesn't
-  // crowd the coin boundary.  With rim shown the rim itself acts as the border;
-  // without rim we substitute a virtual border of ~11% of the coin radius (or at
-  // least 6 mm on large formats) so text sits comfortably inside on all sizes.
-  const noRimBorder = Math.max(coinR * 0.11, 6 * pxPerMm);
-  const edgeClearance = showRim ? innerFacePx * 0.095 : noRimBorder;
-  const textArcR = innerFacePx - edgeClearance;     // centre of characters on arc
+  // Depth blend formula: depth = aiDepth*0.4 + luminance*0.6
+  // For text pixels, aiDepth ≈ 0 (AI sees no 3D in a rendered glyph).
+  // So: luminance needed = (textDepthMm/maxRelief) / 0.6
+  const coinR = procRes / 2;
+  const realRadius = diameter / 2; // mm
+  const pxPerMm = coinR / realRadius;
+  const innerFaceMm = showRim ? diameter - 2 * rimWidth : diameter;
+  const innerFacePx = innerFaceMm * pxPerMm;
+  const textArcR = (innerRadius + (showRim ? rimWidth * 0.5 : 0)) * pxPerMm; // radius at text arc (px)
+  const strokeFactor = 0.08; // stroke width as fraction of fontSize
+  const weight = textFont === 'bold' ? '700' : '600';
+  const g = Math.round(Math.min(255, (textDepthMm / maxRelief / 0.6) * 255)); // depth → gray
 
-  const drawArcText = (text: string, centreAngleDeg: number, arcSpanDeg: number, flipBaseline: boolean, targetCtx: CanvasRenderingContext2D = ctx) => {
-    if (!text || !text.trim()) return;
-    const str = text.trim().toUpperCase();
-    const weight = textFont === 'bold' ? '700' : '600';
+  // Nested: drawArcText function renders a string along a circular arc
+  const drawArcText = (str: string, centreAngleDeg: number, spanDegrees: number, isBottom: boolean, targetCtx: CanvasRenderingContext2D) => {
+    if (!str || str.trim().length === 0) return;
 
-    // Calibrate gray so text renders at textDepthMm
-    const targetDepthNorm = Math.min(1.0, textDepthMm / Math.max(0.1, maxRelief));
-    const textLuminance = Math.min(1.0, targetDepthNorm / 0.6);
-    const g = Math.round(textLuminance * 255);
+    let fontSize = Math.max(coinR * 0.015, innerFacePx * 0.20 * textSize); // initial guess
+    let totalW: number;
+    let widths: number[];
 
-    // Max arc length the text is allowed to occupy (90% of the designated span)
-    const maxArcAngleRad = (arcSpanDeg * 0.90 * Math.PI) / 180;
-    const maxArcLen = maxArcAngleRad * textArcR;
-
-    // Start at the ideal font size then shrink until text fits within arcSpanDeg.
-    // 0.20 × innerFacePx ≈ 189px on a 39mm coin → 3.60mm physical — large, bold,
-    // dominates 4+ mesh vertices per stroke at 768 segments.
-    // (Iterated up from 0.13 → 0.15 → 0.17 → 0.20 as user kept asking for bigger.)
-    let fontSize = Math.round(innerFacePx * 0.20 * textSize);
-    const minFontSize = Math.round(coinR * 0.015); // never go below ~1.5% of radius
-    let widths: number[] = [];
-    let totalW = 0;
-
-    // Letter spacing & stroke — calibrated for crisp, mesh-friendly capitals.
-    //   lineWidth = fontSize × 0.10   (visible bold reinforcement)
-    //   spacing   = fontSize × 0.22   (clear inter-letter gap)
-    //
-    // Sampling math @ fontSize 189px / 39mm coin / 768 segments:
-    //   angular step at textArcR ≈ 7.1px
-    //   natural Trajan Bold stem ≈ 30px (16% of font) → 4.2× Nyquist ✓
-    //   added stroke (×0.10)     ≈ 19px
-    //   effective heavy stem     ≈ 49px = 6.9× ✓ (very robust)
-    //   effective thin diagonal  ≈ 14 + 19 = 33px = 4.6× ✓
-    //   counter width on "O"     ≈ 189 × 0.55 − 2×49 = 6px... still open
-    //   letter spacing           ≈ 42px → 23px gap after stroke ✓
-    //
-    // 0.10 stroke is the sweet spot: visibly bold (text reads as confident
-    // capital weight) but doesn't fill in counters. With 0.05 the strokes
-    // were too delicate; with 0.14+ counters started to close up.
-    const letterSpacingFactor = 0.22;
-    const strokeFactor        = 0.10;
-
-    while (fontSize >= minFontSize) {
+    // Measure string width and scale down if needed to fit arc span
+    while (true) {
       targetCtx.font = `${weight} ${fontSize}px "Trajan Pro", serif`;
       widths = [];
       totalW = 0;
-      for (const ch of str) {
-        const w = targetCtx.measureText(ch).width + fontSize * letterSpacingFactor;
+      for (let i = 0; i < str.length; i++) {
+        const w = targetCtx.measureText(str[i]).width;
         widths.push(w);
         totalW += w;
       }
+
+      const maxArcLen = (textArcR * spanDegrees * Math.PI) / 180;
       if (totalW <= maxArcLen) break; // fits — use this size
       fontSize = Math.round(fontSize * 0.92); // shrink 8% and retry
     }
@@ -588,16 +540,13 @@ export async function generateCoinGeometry(
     console.error('❌ Trajan Pro not available in canvas — arc text will use fallback serif.');
   }
 
-  // ── Arc text NOW comes from TRUE 3D EXTRUDED GEOMETRY (see arcTextGeometry.ts).
-  // We deliberately DO NOT call drawArcText here any more — the canvas-based
-  // text → heightmap → mesh-sample pipeline could not produce Blender-quality
-  // crisp letters at any practical mesh resolution.  Skipping the canvas draw
-  // also means no luminance signal in this region, so the AI depth model and
-  // the textMask treat the text band as flat field — exactly what we want;
-  // the vector text geometry will be welded onto the coin face after the
-  // heightmap mesh is built.
-  void drawArcText; // satisfy linter — function is still defined but unused
-  void topTextSpan; void bottomTextSpan; // referenced when vector text is generated below
+  // Draw arc text on canvas for heightmap
+  if (topText) {
+    drawArcText(topText, 270, topTextSpan, false, ctx2x); // top arc: 10→2 o'clock is 270° center
+  }
+  if (bottomText) {
+    drawArcText(bottomText, 90, bottomTextSpan, true, ctx2x); // bottom arc: 7→5 o'clock is 90° center
+  }
 
   // ── Quality Check #14: Stroke width vs mesh grid spacing ─────────────────
   // A text stroke thinner than 2 mesh-vertex spacings cannot be represented
@@ -1923,13 +1872,6 @@ export async function generateCoinGeometry(
                   arr[i + 3 + j] = arr[i + 6 + j];
                   arr[i + 6 + j] = t;
                 }
-              }
-              pos.needsUpdate = true;
-            }
-            back.computeVertexNormals();
-            backTextGeoms.push(back);
-          }
-        }
               }
               pos.needsUpdate = true;
             }

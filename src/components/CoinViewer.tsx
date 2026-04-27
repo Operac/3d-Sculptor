@@ -2,7 +2,13 @@ import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { CoinSettings, generateCoinGeometry } from '../lib/coinGenerator';
-import { Loader2 } from 'lucide-react';
+
+const Loader2: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <circle cx="12" cy="12" r="10" opacity="0.2" />
+    <path d="M22 12a10 10 0 0 1-10 10" />
+  </svg>
+);
 
 interface CoinViewerProps {
   imageSrc: string;
@@ -221,7 +227,7 @@ export const CoinViewer: React.FC<CoinViewerProps> = ({
   }, [imageSrc, settings, useAdvancedMaterials]);
 
   return (
-    <div className="relative w-full h-full min-h-[400px] bg-neutral-900 rounded-xl overflow-hidden border border-neutral-800 shadow-2xl">
+    <div className="relative w-full h-full min-h-400 bg-neutral-900 rounded-xl overflow-hidden border border-neutral-800 shadow-2xl">
       <div ref={containerRef} className="w-full h-full" />
 
       {loading && (

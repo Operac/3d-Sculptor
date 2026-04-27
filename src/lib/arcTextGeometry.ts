@@ -32,16 +32,21 @@ let fontLoadPromise: Promise<opentype.Font> | null = null;
 export async function loadTrajanFont(): Promise<opentype.Font> {
   if (cachedFont) return cachedFont;
   if (fontLoadPromise) return fontLoadPromise;
-  fontLoadPromise = fetch('/fonts/TrajanPro-Bold.ttf')
+  fontLoadPromise = fetch('/fonts/TrajanPro-Semibold.otf')
     .then(response => {
       if (!response.ok) throw new Error(`Failed to fetch font: ${response.status}`);
       return response.arrayBuffer();
     })
-    .then(buffer => opentype.parse(buffer))
-    .then((font) => {
-      console.log('Trajan font loaded successfully:', font.names.fontFamily);
-      cachedFont = font;
-      return font;
+    .then(buffer => {
+      try {
+        const font = opentype.parse(buffer);
+        console.log('Parsed font successfully:', font.names.fontFamily);
+        cachedFont = font;
+        return font;
+      } catch (e) {
+        console.error('Font parse failed:', e);
+        throw e;
+      }
     });
   return fontLoadPromise;
 }
@@ -165,6 +170,7 @@ export function buildArcTextGeometry(
     faceZ,
     flipBaseline,
   } = opts;
+  console.log('Building arc text for', text, 'at radius', arcRadius);
   if (!text || !text.trim()) return new THREE.BufferGeometry();
   const str = text.trim().toUpperCase();
 
@@ -262,7 +268,11 @@ export function buildArcTextGeometry(
     charGeoms.push(charGeo);
   }
 
-  if (charGeoms.length === 0) return new THREE.BufferGeometry();
+  if (charGeoms.length === 0) {
+    console.log('No characters built for arc text');
+    return new THREE.BufferGeometry();
+  }
+  console.log('Arc text built with', charGeoms.length, 'characters');
   const merged = mergeGeometries(charGeoms, false);
   return merged ?? charGeoms[0];
 }
