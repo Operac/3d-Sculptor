@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { buildArcTextGeometry, loadTrajanFont } from './arcTextGeometry';
+import { buildArcTextGeometry, buildFlatTextGeometry, loadTrajanFont } from './arcTextGeometry';
 
 export type ModelType = 'coin' | 'plaque';
 export type ReliefStyle = 'elevated' | 'embedded' | 'emboss';
@@ -625,31 +625,27 @@ export async function generateCoinGeometry(
 
   // ── SIGNATURE ─────────────────────────────────────────────────────────────
   // Font choice:
-  //   'great-vibes' → flowing cursive (Great Vibes 400) — elegant but thin
-  //   'trajan'      → Trajan Pro Bold — thick strokes, great for 3D printing
-  if (signatureText && signatureText.trim().length > 0) {
+  //   'great-vibes' → flowing cursive (Great Vibes 400) → CANVAS heightmap path
+  //                   (we don't have the TTF locally; opentype.js needs a TTF/OTF)
+  //   'trajan'      → Trajan Pro Bold → VECTOR ExtrudeGeometry path (handled
+  //                   alongside arc text below — skipped here)
+  // For Great Vibes, we keep the canvas drawing so the signature is at least
+  // visible.  TODO: download Great Vibes TTF to public/fonts/ to get crisp
+  // vector geometry for cursive signatures too.
+  const sigUseVector = settings.signatureFont === 'trajan';
+  if (signatureText && signatureText.trim().length > 0 && !sigUseVector) {
     const targetDepthNorm = Math.min(1.0, textDepthMm / Math.max(0.1, maxRelief));
     const sigLuminance    = Math.min(1.0, targetDepthNorm / 0.6);
     const g               = Math.round(sigLuminance * 255);
     const sigFontSize     = Math.round(coinR * 0.09 * signatureSize);
-    const useTrajan       = settings.signatureFont === 'trajan';
 
     ctx2x.save();
-    ctx2x.font         = useTrajan
-      ? `700 ${sigFontSize}px "Trajan Pro", serif`
-      : `400 ${sigFontSize}px "Great Vibes", cursive`;
+    ctx2x.font         = `400 ${sigFontSize}px "Great Vibes", cursive`;
     ctx2x.textAlign    = 'center';
     ctx2x.textBaseline = 'middle';
     ctx2x.fillStyle    = `rgb(${g},${g},${g})`;
-    // Trajan: mild stroke to bolden thin serifs; Great Vibes: no stroke (script stays legible)
-    if (useTrajan) {
-      ctx2x.strokeStyle = `rgb(${g},${g},${g})`;
-      ctx2x.lineWidth   = sigFontSize * 0.08;
-      ctx2x.lineJoin    = 'round';
-    } else {
-      ctx2x.strokeStyle = `rgba(0,0,0,0)`;
-      ctx2x.lineWidth   = 0;
-    }
+    ctx2x.strokeStyle  = `rgba(0,0,0,0)`;
+    ctx2x.lineWidth    = 0;
 
     // Anchor signature inside the medallion ring.
     const autoRingR = textArcR - coinR * 0.13;
@@ -1869,6 +1865,36 @@ export async function generateCoinGeometry(
           if (g.attributes.position) textGeoms.push(g);
         }
 
+        // ── SIGNATURE — vector path (Trajan only).  Great Vibes still uses
+        // the canvas heightmap above (we don't have the TTF locally yet).
+        if (settings.signatureFont === 'trajan' && signatureText && signatureText.trim().length > 0) {
+          // Match the canvas signature's screen-space size: coinR × 0.09 in
+          // pixels = radius × 0.09 mm.  Apply user signatureSize multiplier.
+          const sigFontSizeMm = radius * 0.09 * signatureSize;
+          // Position inside the medallion ring (mirrors the canvas pixel math
+          // converted to mm — autoRingR was textArcR − coinR×0.13 in pixels).
+          const autoRingMm = arcRadiusMm - radius * 0.13;
+          const sigCentreX = signatureOffsetX * autoRingMm;
+          // Canvas had +Y down; in mm/world coords +Y is up.  The canvas
+          // formula `coinR + autoRingR * 0.72 + offsetY * autoRingR` placed
+          // the signature BELOW the coin centre (positive Y in canvas = down).
+          // World-space equivalent: NEGATIVE Y of the same magnitude.
+          const sigBaselineY = -(autoRingMm * 0.72 + signatureOffsetY * autoRingMm);
+          const sigGeo = buildFlatTextGeometry(font, {
+            text: signatureText,
+            centreX: sigCentreX,
+            baselineY: sigBaselineY,
+            fontSizeMm: sigFontSizeMm,
+            letterSpacingMm: sigFontSizeMm * 0.05,
+            textDepthMm,
+            faceZ: zField,
+          });
+          if (sigGeo.attributes.position) {
+            console.info(`  signature geo: ${sigGeo.attributes.position.count} verts`);
+            textGeoms.push(sigGeo);
+          }
+        }
+
         // Mirror to back face if double-faced (matches the X+Z negation done
         // for the heightmap mesh above).
         if (settings.isDoubleFaced) {
@@ -1894,23 +1920,32 @@ export async function generateCoinGeometry(
         }
 
         if (textGeoms.length > 0) {
-          // Make every text geometry have the same attribute set as the coin
-          // mesh (position + normal, indexed).  computeVertexNormals on each
-          // ensures normals exist; mergeGeometries then concatenates them.
-          for (const g of textGeoms) {
-            if (!g.attributes.normal) g.computeVertexNormals();
-          }
-
-          // Coin mesh has only position+normal; strip any extras (uv, etc.)
-          // from text geos to keep mergeGeometries happy.
+          // CRITICAL: ExtrudeGeometry produces NON-INDEXED geometries with
+          // position + normal + uv attributes.  The coin mesh is INDEXED with
+          // position + normal only.  mergeGeometries silently returns null if
+          // the inputs disagree on either the index mode OR the attribute set.
+          //
+          // Fix in two steps for each text geometry:
+          //   1. mergeVertices() — dedupes vertices AND converts to an indexed
+          //      BufferGeometry, matching the coin's index mode.
+          //   2. deleteAttribute('uv') — strip uvs the coin doesn't have.
+          // Then computeVertexNormals to repopulate normals on the deduped mesh.
           const coinAttrs = new Set(Object.keys(geometry.attributes));
-          for (const g of textGeoms) {
+          const cleanTextGeoms: THREE.BufferGeometry[] = [];
+          for (let i = 0; i < textGeoms.length; i++) {
+            let g = textGeoms[i];
+            // Strip extras BEFORE mergeVertices so dedupe is stable.
             for (const key of Object.keys(g.attributes)) {
               if (!coinAttrs.has(key)) g.deleteAttribute(key);
             }
+            g = mergeVertices(g, 1e-4); // also makes indexed
+            g.computeVertexNormals();
+            const triCount = g.index ? g.index.count / 3 : 0;
+            console.info(`  text geo ${i}: ${g.attributes.position.count} verts, ${triCount} tris`);
+            cleanTextGeoms.push(g);
           }
 
-          const merged = mergeGeometries([geometry, ...textGeoms], false);
+          const merged = mergeGeometries([geometry, ...cleanTextGeoms], false);
           if (merged) {
             // Carry the coin-mesh material groups forward; text uses the same
             // (default) material group as the coin face.
@@ -1918,19 +1953,23 @@ export async function generateCoinGeometry(
             for (const grp of geometry.groups) {
               merged.addGroup(grp.start, grp.count, grp.materialIndex);
             }
-            // Replace the geometry reference for the QC pass below.
-            (geometry as unknown as { dispose: () => void }).dispose?.();
-            // Reassign via Object.assign to keep `geometry` const-binding.
-            Object.assign(geometry, {
-              attributes: merged.attributes,
-              index: merged.index,
-              groups: merged.groups,
-              boundingBox: null,
-              boundingSphere: null,
-            });
-            console.info(`✅ Vector arc text merged: ${textGeoms.length} text geometries → coin mesh`);
+            // Use BufferGeometry.copy() — the proper way to transfer attributes,
+            // index, and groups in place.  Object.assign does not work
+            // reliably because Three.js holds internal references.
+            geometry.copy(merged);
+            geometry.boundingBox = null;
+            geometry.boundingSphere = null;
+            console.info(`✅ Vector arc text merged: ${cleanTextGeoms.length} text geometries → coin mesh (${geometry.attributes.position.count} total verts)`);
+          } else {
+            console.error('❌ mergeGeometries returned null — attribute layouts disagreed.');
+            console.error('   coin attrs:', Object.keys(geometry.attributes), 'indexed:', !!geometry.index);
+            for (let i = 0; i < cleanTextGeoms.length; i++) {
+              console.error(`   text[${i}] attrs:`, Object.keys(cleanTextGeoms[i].attributes), 'indexed:', !!cleanTextGeoms[i].index);
+            }
           }
         }
+      } else {
+        console.warn('⚠️ Trajan font not loaded — arc text skipped. Check that /fonts/TrajanPro-Bold.ttf is reachable.');
       }
     }
   }

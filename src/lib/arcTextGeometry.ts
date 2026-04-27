@@ -39,6 +39,88 @@ export async function loadTrajanFont(): Promise<opentype.Font> {
   return fontLoadPromise;
 }
 
+export interface FlatTextOptions {
+  text: string;
+  /** X position of the centre of the text (mm) */
+  centreX: number;
+  /** Y position of the baseline (mm) */
+  baselineY: number;
+  /** Cap height of glyphs (mm) */
+  fontSizeMm: number;
+  /** Letter spacing in mm */
+  letterSpacingMm: number;
+  /** Extrusion depth in mm */
+  textDepthMm: number;
+  /** Z bottom of the prism (mm) */
+  faceZ: number;
+}
+
+/** Build a single merged BufferGeometry for FLAT (non-arc) text — for the
+ *  signature.  Text is laid out left-to-right, centred horizontally on
+ *  centreX, with the baseline at baselineY in the XY plane.  Extrudes upward
+ *  in +Z by textDepthMm starting at Z=faceZ. */
+export function buildFlatTextGeometry(
+  font: opentype.Font,
+  opts: FlatTextOptions,
+): THREE.BufferGeometry {
+  const {
+    text, centreX, baselineY, fontSizeMm, letterSpacingMm, textDepthMm, faceZ,
+  } = opts;
+  if (!text || !text.trim()) return new THREE.BufferGeometry();
+  const str = text.trim();
+
+  const os2 = font.tables.os2 as unknown as { sCapHeight?: number } | undefined;
+  const capHeightRatio = os2?.sCapHeight ? os2.sCapHeight / font.unitsPerEm : 0.66;
+  const emSize = fontSizeMm / capHeightRatio;
+
+  // Measure each character's advance width
+  const widths: number[] = [];
+  let totalW = 0;
+  for (const ch of str) {
+    const glyph = font.charToGlyph(ch);
+    const w = (glyph.advanceWidth ?? 500) * (emSize / font.unitsPerEm) + letterSpacingMm;
+    widths.push(w);
+    totalW += w;
+  }
+
+  // Layout left-to-right, centred on centreX
+  let xCursor = centreX - totalW / 2;
+  const charGeoms: THREE.BufferGeometry[] = [];
+
+  for (let i = 0; i < str.length; i++) {
+    const ch = str[i];
+    const glyph = font.charToGlyph(ch);
+    if (!glyph || !glyph.path) { xCursor += widths[i]; continue; }
+    const otPath = glyph.getPath(0, 0, emSize);
+    const shapes = openTypePathToShapes(otPath);
+    if (shapes.length === 0) { xCursor += widths[i]; continue; }
+
+    const perCharGeoms: THREE.BufferGeometry[] = [];
+    for (const shape of shapes) {
+      const g = new THREE.ExtrudeGeometry(shape, {
+        depth: textDepthMm,
+        bevelEnabled: false,
+        curveSegments: 8,
+      });
+      perCharGeoms.push(g);
+    }
+    const charGeo = perCharGeoms.length === 1
+      ? perCharGeoms[0]
+      : (mergeGeometries(perCharGeoms, false) ?? perCharGeoms[0]);
+
+    // Y-up flip (opentype draws Y-down)
+    charGeo.scale(1, -1, 1);
+    // Position: glyph origin is at left edge / baseline.  Translate so left edge is at xCursor and baseline at baselineY.
+    charGeo.translate(xCursor, baselineY, faceZ);
+    charGeoms.push(charGeo);
+
+    xCursor += widths[i];
+  }
+
+  if (charGeoms.length === 0) return new THREE.BufferGeometry();
+  return mergeGeometries(charGeoms, false) ?? charGeoms[0];
+}
+
 export interface ArcTextOptions {
   text: string;
   /** Mid-radius of the text arc, in mm (centre of glyph cap-height) */
