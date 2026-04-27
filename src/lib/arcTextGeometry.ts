@@ -108,9 +108,9 @@ export function buildFlatTextGeometry(
       ? perCharGeoms[0]
       : (mergeGeometries(perCharGeoms, false) ?? perCharGeoms[0]);
 
-    // Y-up flip (opentype draws Y-down)
-    charGeo.scale(1, -1, 1);
-    // Position: glyph origin is at left edge / baseline.  Translate so left edge is at xCursor and baseline at baselineY.
+    // No Y-scale: openTypePathToShapes() already negates Y at source so the
+    // glyph is Y-up with CCW outer winding → outward normals (no culling).
+    // Position: glyph origin (after Y-negation) is at left edge / baseline.
     charGeo.translate(xCursor, baselineY, faceZ);
     charGeoms.push(charGeo);
 
@@ -189,9 +189,17 @@ export function buildArcTextGeometry(
   }
 
   // Distribute across arc.
+  // ITERATION DIRECTION: in THREE coords (Y-up), increasing angle goes CCW.
+  // For TOP arc (centre = +π/2), reading left-to-right means moving CW =
+  // DECREASING angle.  We start at the upper-left edge (HIGH angle), step
+  // through the centre, end at upper-right (LOW angle).
+  // For BOTTOM arc the same algorithm naturally produces upside-down
+  // characters (because rotateZ by -π puts them upright→inverted), which
+  // read correctly when the coin is rotated 180°.
   const totalArcAngle = totalW / arcRadius;
   const centreRad = (centreAngleDeg * Math.PI) / 180;
-  const startAngle = centreRad - totalArcAngle / 2;
+  const startAngle = centreRad + totalArcAngle / 2;       // start at HIGH angle
+  void flipBaseline; // not needed — orientation falls out of the rotation formula
 
   const charGeoms: THREE.BufferGeometry[] = [];
   let cumAngle = startAngle;
@@ -199,8 +207,8 @@ export function buildArcTextGeometry(
   for (let i = 0; i < str.length; i++) {
     const ch = str[i];
     const halfAngle = widths[i] / 2 / arcRadius;
-    const charAngle = cumAngle + halfAngle;
-    cumAngle += widths[i] / arcRadius;
+    const charAngle = cumAngle - halfAngle;               // step CW
+    cumAngle -= widths[i] / arcRadius;                    // advance CW
 
     // Build shapes for this glyph.
     const glyph = font.charToGlyph(ch);
@@ -210,7 +218,10 @@ export function buildArcTextGeometry(
     if (shapes.length === 0) continue;
 
     // Each character builds an ExtrudeGeometry per shape, then we merge,
-    // then we orient + translate to the arc position.
+    // then we orient + translate to the arc position.  No Y-scale needed:
+    // openTypePathToShapes() already negates Y at source so glyphs are Y-up
+    // with proper CCW outer winding → ExtrudeGeometry produces correct
+    // OUTWARD normals (no front-face culling).
     const perCharGeoms: THREE.BufferGeometry[] = [];
     for (const shape of shapes) {
       const g = new THREE.ExtrudeGeometry(shape, {
@@ -224,30 +235,17 @@ export function buildArcTextGeometry(
       ? perCharGeoms[0]
       : (mergeGeometries(perCharGeoms, false) ?? perCharGeoms[0]);
 
-    // 1. opentype draws Y-DOWN; we need Y-UP → flip Y.
-    charGeo.scale(1, -1, 1);
-
-    // 2. Centre horizontally on the character's advance width so the arc
-    //    distributes letters by their geometric centres.
+    // Centre horizontally on the character's advance width so the arc
+    // distributes letters by their geometric centres.
     charGeo.translate(-widths[i] / 2, 0, 0);
 
-    // 3. For BOTTOM arc: rotate 180° around X so the character faces down
-    //    (so it reads correctly when the coin is flipped).  Same as flipBaseline.
-    if (flipBaseline) {
-      charGeo.rotateX(Math.PI);
-    }
-
-    // 4. Rotate the character so its baseline lies along the arc tangent
-    //    and its "up" points outward from the coin centre.
-    //    For top arc (centreAngleDeg ≈ 90°/π/2 in THREE coords):
-    //      charAngle ≈ π/2, we want "up" = +Y → rotation = charAngle - π/2.
-    //    For bottom arc (centreAngleDeg ≈ -90°/-π/2):
-    //      after the X-flip above, the same rotation formula puts the chars
-    //      reading clockwise around the bottom — which displays mirrored on
-    //      screen but reads correctly when the coin is rotated 180°.
+    // Rotate so the character's baseline lies along the arc tangent and
+    // "up" points outward (toward rim).
+    //   At top centre (charAngle = π/2): rotation = 0  → upright ✓
+    //   At bottom centre (charAngle = -π/2): rotation = -π → upside-down ✓
     charGeo.rotateZ(charAngle - Math.PI / 2);
 
-    // 5. Translate to the position on the arc circle (XY plane, at faceZ).
+    // Translate to the position on the arc circle (XY plane, at faceZ).
     charGeo.translate(
       arcRadius * Math.cos(charAngle),
       arcRadius * Math.sin(charAngle),
@@ -264,9 +262,18 @@ export function buildArcTextGeometry(
 
 /**
  * Convert an opentype.Path (sequence of M/L/C/Q/Z commands) into one or more
- * THREE.Shape objects.  Each closed subpath becomes either a Shape (CCW after
- * Y-flip = solid outer) or a hole on the most-recently-added shape that
- * contains it (CW after Y-flip = inner counter).
+ * THREE.Shape objects.  Each closed subpath becomes either a Shape (CCW =
+ * solid outer) or a hole on the smallest enclosing outer (CW = inner counter).
+ *
+ * IMPORTANT: opentype.js outputs Y-DOWN coordinates (canvas convention).
+ * We NEGATE Y at the source here so the resulting Shape is in Y-UP coords,
+ * matching the THREE.js world.  Doing the flip at construction time (rather
+ * than via geometry.scale(1,-1,1) afterwards) is critical: scaling by -1 on
+ * one axis MIRRORS the geometry without changing triangle winding indices,
+ * which inverts every face normal → all text faces get back-face culled and
+ * the entire mesh becomes invisible.  By flipping at the path level, the
+ * outer contours come out CCW → ExtrudeGeometry produces correct outward
+ * normals → faces are visible.
  */
 function openTypePathToShapes(otPath: opentype.Path): THREE.Shape[] {
   // First pass: split commands into subpaths.
@@ -282,8 +289,10 @@ function openTypePathToShapes(otPath: opentype.Path): THREE.Shape[] {
     }
   }
 
-  // Build a THREE.Path for each subpath, plus its signed area (positive after
-  // Y-flip = CCW = solid outer; negative = hole).
+  // Build a THREE.Path for each subpath, plus its signed area.
+  // Y is negated here, so:
+  //   • outer contours (CW in TTF Y-down) become CCW → positive shoelace area
+  //   • holes (CCW in TTF Y-down) become CW → negative shoelace area
   const built: { path: THREE.Path; area: number; bbox: THREE.Box2 }[] = [];
   for (const s of subs) {
     const p = new THREE.Path();
@@ -292,51 +301,53 @@ function openTypePathToShapes(otPath: opentype.Path): THREE.Shape[] {
     const samples: THREE.Vector2[] = [];
     for (const c of s.commands) {
       switch (c.type) {
-        case 'M':
-          p.moveTo(c.x, c.y);
-          firstX = c.x; firstY = c.y;
+        case 'M': {
+          const y = -c.y;
+          p.moveTo(c.x, y);
+          firstX = c.x; firstY = y;
           started = true;
-          samples.push(new THREE.Vector2(c.x, c.y));
+          samples.push(new THREE.Vector2(c.x, y));
           break;
-        case 'L':
-          p.lineTo(c.x, c.y);
-          samples.push(new THREE.Vector2(c.x, c.y));
+        }
+        case 'L': {
+          const y = -c.y;
+          p.lineTo(c.x, y);
+          samples.push(new THREE.Vector2(c.x, y));
           break;
-        case 'Q':
-          p.quadraticCurveTo(c.x1, c.y1, c.x, c.y);
-          samples.push(new THREE.Vector2(c.x, c.y));
+        }
+        case 'Q': {
+          p.quadraticCurveTo(c.x1, -c.y1, c.x, -c.y);
+          samples.push(new THREE.Vector2(c.x, -c.y));
           break;
-        case 'C':
-          p.bezierCurveTo(c.x1, c.y1, c.x2, c.y2, c.x, c.y);
-          samples.push(new THREE.Vector2(c.x, c.y));
+        }
+        case 'C': {
+          p.bezierCurveTo(c.x1, -c.y1, c.x2, -c.y2, c.x, -c.y);
+          samples.push(new THREE.Vector2(c.x, -c.y));
           break;
-        case 'Z':
+        }
+        case 'Z': {
           if (started) {
             p.lineTo(firstX, firstY);
             samples.push(new THREE.Vector2(firstX, firstY));
           }
           break;
+        }
       }
     }
     if (samples.length < 3) continue;
 
-    // Signed area BEFORE Y-flip (Y-down).  In Y-down, outer contours of TTF
-    // glyphs are clockwise (negative shoelace).  After our scale(1,-1,1) flip,
-    // they become CCW (positive) which is what THREE.Shape expects for outers.
-    // So: rawArea < 0 here ⇒ outer shape; rawArea > 0 ⇒ hole.
-    let rawArea = 0;
+    let area = 0;
     for (let k = 0; k < samples.length; k++) {
       const a = samples[k];
       const b = samples[(k + 1) % samples.length];
-      rawArea += a.x * b.y - b.x * a.y;
+      area += a.x * b.y - b.x * a.y;
     }
-    rawArea *= 0.5;
-    const flippedArea = -rawArea; // post-Y-flip area
+    area *= 0.5;
 
     const bbox = new THREE.Box2();
     for (const v of samples) bbox.expandByPoint(v);
 
-    built.push({ path: p, area: flippedArea, bbox });
+    built.push({ path: p, area, bbox });
   }
 
   // Assemble shapes: each positive-area path is an outer Shape; each
