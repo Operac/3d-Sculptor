@@ -82,7 +82,7 @@ export const COIN_PRESET: CoinSettings = {
    imageContrast: 1.0,
    imageBrightness: 0.0,
    invertImage: false,
-   topText: 'EXAMPLE',
+  topText: '',
    topTextSpan: 200,
    bottomText: '',
    bottomTextSpan: 100,
@@ -134,7 +134,7 @@ export const PLAQUE_PRESET: CoinSettings = {
   bottomText: '',
   bottomTextSpan: 90,
   textSize: 1.0,
-  textDepthMm: 2.0,
+  textDepthMm: 2.0,      // pocket coin spec: 0.8–1.2 mm shallow relief (mid value)
   textFont: 'semibold',
   signatureText: '',
   signatureFont: 'great-vibes',
