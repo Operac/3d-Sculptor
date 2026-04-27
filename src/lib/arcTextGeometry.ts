@@ -411,39 +411,68 @@ function openTypePathToShapes(otPath: opentype.Path): THREE.Shape[] {
     built.push({ path: p, area, bbox });
   }
 
-  // Assemble shapes: each positive-area path is an outer Shape; each
-  // negative-area path becomes a hole on the smallest enclosing outer.
-  const shapes: { shape: THREE.Shape; bbox: THREE.Box2 }[] = [];
-  for (const b of built) {
-    if (b.area > 0) {
-      const s = new THREE.Shape(b.path.getPoints());
-      shapes.push({ shape: s, bbox: b.bbox });
-    }
-  }
-  for (const b of built) {
-    if (b.area <= 0) {
-      // Find smallest-area outer shape that contains this hole's bbox.
-      let host: { shape: THREE.Shape; bbox: THREE.Box2 } | null = null;
-      let bestArea = Infinity;
-      for (const s of shapes) {
-        if (
-          s.bbox.containsBox(b.bbox)
-        ) {
-          const a = (s.bbox.max.x - s.bbox.min.x) * (s.bbox.max.y - s.bbox.min.y);
-          if (a < bestArea) {
-            host = s;
-            bestArea = a;
-          }
-        }
-      }
-      if (host) {
-        host.shape.holes.push(new THREE.Path(b.path.getPoints()));
-      } else {
-        // Orphan hole: treat as filled outer to avoid lost geometry.
-        shapes.push({ shape: new THREE.Shape(b.path.getPoints()), bbox: b.bbox });
-      }
-    }
-  }
+   // Determine orientation correction: after Y-flip, outer contours should be
+   // CCW (positive area). If the largest subpath (outermost) has negative area,
+   // all subpaths are inverted — flip them so outer becomes positive and holes
+   // become negative (CW).
+   let maxAbsArea = 0;
+   let maxArea = 0;
+   for (const b of built) {
+     const absA = Math.abs(b.area);
+     if (absA > maxAbsArea) {
+       maxAbsArea = absA;
+       maxArea = b.area;
+     }
+   }
+   const flipAll = maxArea < 0;
+
+   // Assemble shapes: each positive-area path is an outer Shape; each
+   // negative-area path becomes a hole on the smallest enclosing outer.
+   const shapes: { shape: THREE.Shape; bbox: THREE.Box2 }[] = [];
+   // Outer shapes (positive area after correction)
+   for (const b of built) {
+     let points = b.path.getPoints();
+     let area = b.area;
+     if (flipAll) {
+       points = points.reverse();
+       area = -area;
+     }
+     if (area > 0) {
+       const s = new THREE.Shape(points);
+       shapes.push({ shape: s, bbox: b.bbox });
+     }
+   }
+   // Holes (negative area after correction)
+   for (const b of built) {
+     let points = b.path.getPoints();
+     let area = b.area;
+     if (flipAll) {
+       points = points.reverse();
+       area = -area;
+     }
+     if (area <= 0) {
+       // Find smallest-area outer shape that contains this hole's bbox.
+       let host: { shape: THREE.Shape; bbox: THREE.Box2 } | null = null;
+       let bestArea = Infinity;
+       for (const s of shapes) {
+         if (
+           s.bbox.containsBox(b.bbox)
+         ) {
+           const a = (s.bbox.max.x - s.bbox.min.x) * (s.bbox.max.y - s.bbox.min.y);
+           if (a < bestArea) {
+             host = s;
+             bestArea = a;
+           }
+         }
+       }
+       if (host) {
+         host.shape.holes.push(new THREE.Path(points));
+       } else {
+         // Orphan hole: treat as filled outer to avoid lost geometry.
+         shapes.push({ shape: new THREE.Shape(points), bbox: b.bbox });
+       }
+     }
+   }
 
   return shapes.map((s) => s.shape);
 }
