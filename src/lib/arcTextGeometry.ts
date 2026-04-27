@@ -107,10 +107,9 @@ export function buildFlatTextGeometry(
     const shapes = openTypePathToShapes(otPath);
     if (shapes.length === 0) { xCursor += widths[i]; continue; }
 
-    // Small chamfer ≈ 6% of font size — matches Blender's bevel_depth=0.1
-    // for ~1.5mm text.  Softens the 90° corners so edges catch light cleanly
-    // (otherwise sharp edges read as harsh/aliased in screen-space rendering).
-    const bevelSizeMm = Math.min(fontSizeMm * 0.06, textDepthMm * 0.25);
+    // Small chamfer ≈ 3% of font size, capped at 25% of text depth.
+    // (Flat text isn't shrunk-to-fit, so fontSizeMm IS the rendered size.)
+    const bevelSizeMm = Math.min(fontSizeMm * 0.03, textDepthMm * 0.25);
     const perCharGeoms: THREE.BufferGeometry[] = [];
     for (const shape of shapes) {
       const g = new THREE.ExtrudeGeometry(shape, {
@@ -191,23 +190,41 @@ export function buildArcTextGeometry(
   const capHeightRatio = os2?.sCapHeight ? os2.sCapHeight / font.unitsPerEm : 0.66;
   const emSize = fontSizeMm / capHeightRatio;
 
-  // Layout: shrink emSize until the whole word fits the arc span.
+  // Layout: DIRECT fit calculation.  The previous iterative shrink (max 8
+  // passes of × 0.92, ~50 % reduction floor) ran out of headroom for long
+  // strings — they overflowed the arc span and letters overlapped, producing
+  // the chaotic ribbon the user reported.
+  //
+  // Steps:
+  //   1. Measure widths at the requested scale (no shrink yet).
+  //   2. If the total exceeds the available arc length, scale BOTH the glyph
+  //      size AND the letter-spacing by maxArcLen/totalW so they fit exactly.
+  //   3. Re-measure to get the final widths used for placement.
   const maxArcLen = (arcSpanDeg * 0.92 * Math.PI / 180) * arcRadius;
   let scale = emSize;
-  let widths: number[] = [];
-  let totalW = 0;
-  for (let pass = 0; pass < 8; pass++) {
-    widths = [];
-    totalW = 0;
+  let effectiveLetterSpacing = letterSpacingMm;
+
+  const measure = (s: number, sp: number): { widths: number[], totalW: number } => {
+    const ws: number[] = [];
+    let tw = 0;
     for (const ch of str) {
       const glyph = font.charToGlyph(ch);
-      const w = (glyph.advanceWidth ?? 500) * (scale / font.unitsPerEm) + letterSpacingMm;
-      widths.push(w);
-      totalW += w;
+      const w = (glyph.advanceWidth ?? 500) * (s / font.unitsPerEm) + sp;
+      ws.push(w);
+      tw += w;
     }
-    if (totalW <= maxArcLen) break;
-    scale *= 0.92;
+    return { widths: ws, totalW: tw };
+  };
+
+  let { widths, totalW } = measure(scale, effectiveLetterSpacing);
+  if (totalW > maxArcLen) {
+    const fitFactor = maxArcLen / totalW;
+    scale *= fitFactor;
+    effectiveLetterSpacing *= fitFactor;
+    ({ widths, totalW } = measure(scale, effectiveLetterSpacing));
   }
+  // Actual rendered cap-height in mm (post-shrink) — used below for bevel sizing.
+  const actualFontSizeMm = scale * capHeightRatio;
 
   // Distribute across arc.
   // ITERATION DIRECTION: in THREE coords (Y-up), increasing angle goes CCW.
@@ -247,10 +264,16 @@ export function buildArcTextGeometry(
     // Quality settings (matched to Blender's TEXT_RELIEF + bevel_depth idiom):
     //   • curveSegments: 20 — Trajan glyphs have many subtle curves; 6 gave
     //     a faceted/pixelated appearance the user complained about.
-    //   • bevel: small chamfer (~6% of cap-height) so edges catch light
-    //     properly. Without it, perfectly-vertical walls read as harsh /
-    //     aliased in the renderer because there is no specular falloff.
-    const bevelSizeMm = Math.min(fontSizeMm * 0.06, textDepthMm * 0.25);
+    //   • bevel: small chamfer (~3% of ACTUAL cap-height after shrink-to-fit).
+    //     Was 6% of REQUESTED size, which broke when text was shrunk to fit:
+    //     a 7 mm requested → 1.5 mm rendered letter ended up with a 0.42 mm
+    //     bevel that swallowed every stroke into a featureless ridge.
+    //     Now uses the post-shrink `actualFontSizeMm` so bevel scales with
+    //     the rendered glyph.  Hard cap at 25 % of textDepth so we never
+    //     invert geometry on very shallow text.  Trajan stem widths are
+    //     ≈12 % of cap-height, so 3 % bevel = ~25 % of stroke width — visible
+    //     edge highlight without merging adjacent strokes.
+    const bevelSizeMm = Math.min(actualFontSizeMm * 0.03, textDepthMm * 0.25);
     const perCharGeoms: THREE.BufferGeometry[] = [];
     for (const shape of shapes) {
       const g = new THREE.ExtrudeGeometry(shape, {
