@@ -1830,7 +1830,12 @@ export async function generateCoinGeometry(
         const fontSizeMm    = innerFaceMm * 0.20 * textSize;
         const letterSpacing = fontSizeMm * 0.22;
 
-        const textGeoms: THREE.BufferGeometry[] = [];
+        // Track FRONT-face text geometries separately from BACK so we can
+        // emit two material groups (front=mat 0, back=mat 2) covering them.
+        // Triangles outside any group are NOT rendered when the geometry has
+        // groups (which the coin always does) — this is the bug that hid all
+        // the previous attempts at vector text.
+        const frontTextGeoms: THREE.BufferGeometry[] = [];
 
         if (haveTopText) {
           // THREE coords: +X = 3 o'clock, +Y = 12 o'clock.  Top arc centred at
@@ -1846,7 +1851,7 @@ export async function generateCoinGeometry(
             faceZ: zField,
             flipBaseline: false,
           });
-          if (g.attributes.position) textGeoms.push(g);
+          if (g.attributes.position) frontTextGeoms.push(g);
         }
 
         if (haveBottomText) {
@@ -1862,7 +1867,7 @@ export async function generateCoinGeometry(
             faceZ: zField,
             flipBaseline: true,
           });
-          if (g.attributes.position) textGeoms.push(g);
+          if (g.attributes.position) frontTextGeoms.push(g);
         }
 
         // ── SIGNATURE — vector path (Trajan only).  Great Vibes still uses
@@ -1891,80 +1896,122 @@ export async function generateCoinGeometry(
           });
           if (sigGeo.attributes.position) {
             console.info(`  signature geo: ${sigGeo.attributes.position.count} verts`);
-            textGeoms.push(sigGeo);
+            frontTextGeoms.push(sigGeo);
           }
         }
 
         // Mirror to back face if double-faced (matches the X+Z negation done
-        // for the heightmap mesh above).
+        // for the heightmap mesh above).  Kept SEPARATE from front text so
+        // we can give the back text its own material group (materialIndex=2).
+        const backTextGeoms: THREE.BufferGeometry[] = [];
         if (settings.isDoubleFaced) {
-          const backGeoms: THREE.BufferGeometry[] = [];
-          for (const g of textGeoms) {
+          for (const g of frontTextGeoms) {
             const back = g.clone();
-            // Mirror X and Z: applyMatrix4 with diag(-1,1,-1) — also need to
-            // flip triangle winding so normals stay outward.
+            // Mirror X and Z: applyMatrix4 with diag(-1,1,-1) — winding flip
+            // below restores outward normals after the mirror.
             back.applyMatrix4(new THREE.Matrix4().makeScale(-1, 1, -1));
-            // Flip winding: invert each triangle's index order.
-            const idx = back.getIndex();
-            if (idx) {
-              const arr = idx.array as Uint16Array | Uint32Array;
-              for (let i = 0; i < arr.length; i += 3) {
-                const t = arr[i + 1]; arr[i + 1] = arr[i + 2]; arr[i + 2] = t;
+            // ExtrudeGeometry is non-indexed at this point.  Flip winding by
+            // swapping every other vertex pair in the position array.
+            const pos = back.attributes.position;
+            if (pos) {
+              const arr = pos.array as Float32Array;
+              for (let i = 0; i < arr.length; i += 9) {
+                for (let j = 0; j < 3; j++) {
+                  const t = arr[i + 3 + j];
+                  arr[i + 3 + j] = arr[i + 6 + j];
+                  arr[i + 6 + j] = t;
+                }
               }
-              idx.needsUpdate = true;
+              pos.needsUpdate = true;
             }
             back.computeVertexNormals();
-            backGeoms.push(back);
+            backTextGeoms.push(back);
           }
-          textGeoms.push(...backGeoms);
         }
 
-        if (textGeoms.length > 0) {
+        const allTextGeoms = [...frontTextGeoms, ...backTextGeoms];
+
+        if (allTextGeoms.length > 0) {
           // CRITICAL: ExtrudeGeometry produces NON-INDEXED geometries with
           // position + normal + uv attributes.  The coin mesh is INDEXED with
           // position + normal only.  mergeGeometries silently returns null if
           // the inputs disagree on either the index mode OR the attribute set.
           //
-          // Fix in two steps for each text geometry:
-          //   1. mergeVertices() — dedupes vertices AND converts to an indexed
-          //      BufferGeometry, matching the coin's index mode.
-          //   2. deleteAttribute('uv') — strip uvs the coin doesn't have.
-          // Then computeVertexNormals to repopulate normals on the deduped mesh.
+          // For each text geo:
+          //   1. Strip uv (coin doesn't have it).
+          //   2. mergeVertices() — dedupes AND converts to indexed.
+          //   3. computeVertexNormals on the deduped mesh.
           const coinAttrs = new Set(Object.keys(geometry.attributes));
-          const cleanTextGeoms: THREE.BufferGeometry[] = [];
-          for (let i = 0; i < textGeoms.length; i++) {
-            let g = textGeoms[i];
-            // Strip extras BEFORE mergeVertices so dedupe is stable.
+          const cleanFront: THREE.BufferGeometry[] = [];
+          const cleanBack:  THREE.BufferGeometry[] = [];
+          let frontTextIndexCount = 0;
+          let backTextIndexCount  = 0;
+          for (let i = 0; i < frontTextGeoms.length; i++) {
+            let g = frontTextGeoms[i];
             for (const key of Object.keys(g.attributes)) {
               if (!coinAttrs.has(key)) g.deleteAttribute(key);
             }
-            g = mergeVertices(g, 1e-4); // also makes indexed
+            g = mergeVertices(g, 1e-4);
             g.computeVertexNormals();
-            const triCount = g.index ? g.index.count / 3 : 0;
-            console.info(`  text geo ${i}: ${g.attributes.position.count} verts, ${triCount} tris`);
-            cleanTextGeoms.push(g);
+            const idxCount = g.index ? g.index.count : 0;
+            frontTextIndexCount += idxCount;
+            console.info(`  front text geo ${i}: ${g.attributes.position.count} verts, ${idxCount/3} tris`);
+            cleanFront.push(g);
+          }
+          for (let i = 0; i < backTextGeoms.length; i++) {
+            let g = backTextGeoms[i];
+            for (const key of Object.keys(g.attributes)) {
+              if (!coinAttrs.has(key)) g.deleteAttribute(key);
+            }
+            g = mergeVertices(g, 1e-4);
+            g.computeVertexNormals();
+            const idxCount = g.index ? g.index.count : 0;
+            backTextIndexCount += idxCount;
+            console.info(`  back text geo ${i}: ${g.attributes.position.count} verts, ${idxCount/3} tris`);
+            cleanBack.push(g);
           }
 
-          const merged = mergeGeometries([geometry, ...cleanTextGeoms], false);
+          const merged = mergeGeometries([geometry, ...cleanFront, ...cleanBack], false);
           if (merged) {
-            // Carry the coin-mesh material groups forward; text uses the same
-            // (default) material group as the coin face.
+            // CRITICAL: Re-emit material groups including the new text triangles.
+            // Layout in the merged index buffer:
+            //   [coin indices 0..coinTotal][front text][back text]
+            //
+            // Coin's existing groups already cover [0..coinTotal].  We append:
+            //   • One group for front text using the FRONT material index
+            //   • One group for back  text using the BACK  material index
+            //
+            // Without these, the text triangles fall outside any group and
+            // Three.js silently DOES NOT RENDER them — this was the
+            // root cause of "no text appears".
             merged.clearGroups();
+            const coinIndexCount = geometry.index ? geometry.index.count : 0;
+            // Front material index: coin's first group (always front face)
+            const frontMatIdx = geometry.groups[0]?.materialIndex ?? 0;
+            // Back material index: coin's last group (back face if double-sided, else same as front)
+            const backMatIdx  = geometry.groups[geometry.groups.length - 1]?.materialIndex ?? frontMatIdx;
             for (const grp of geometry.groups) {
               merged.addGroup(grp.start, grp.count, grp.materialIndex);
             }
-            // Use BufferGeometry.copy() — the proper way to transfer attributes,
-            // index, and groups in place.  Object.assign does not work
-            // reliably because Three.js holds internal references.
+            if (frontTextIndexCount > 0) {
+              merged.addGroup(coinIndexCount, frontTextIndexCount, frontMatIdx);
+            }
+            if (backTextIndexCount > 0) {
+              merged.addGroup(coinIndexCount + frontTextIndexCount, backTextIndexCount, backMatIdx);
+            }
+            // Use BufferGeometry.copy() — proper in-place attribute transfer.
             geometry.copy(merged);
             geometry.boundingBox = null;
             geometry.boundingSphere = null;
-            console.info(`✅ Vector arc text merged: ${cleanTextGeoms.length} text geometries → coin mesh (${geometry.attributes.position.count} total verts)`);
+            console.info(`✅ Vector text merged: ${cleanFront.length} front + ${cleanBack.length} back text geos. Total verts: ${geometry.attributes.position.count}. Groups: ${geometry.groups.length} (front mat=${frontMatIdx}, back mat=${backMatIdx})`);
           } else {
             console.error('❌ mergeGeometries returned null — attribute layouts disagreed.');
             console.error('   coin attrs:', Object.keys(geometry.attributes), 'indexed:', !!geometry.index);
-            for (let i = 0; i < cleanTextGeoms.length; i++) {
-              console.error(`   text[${i}] attrs:`, Object.keys(cleanTextGeoms[i].attributes), 'indexed:', !!cleanTextGeoms[i].index);
+            for (let i = 0; i < cleanFront.length; i++) {
+              console.error(`   front[${i}] attrs:`, Object.keys(cleanFront[i].attributes), 'indexed:', !!cleanFront[i].index);
+            }
+            for (let i = 0; i < cleanBack.length; i++) {
+              console.error(`   back[${i}] attrs:`, Object.keys(cleanBack[i].attributes), 'indexed:', !!cleanBack[i].index);
             }
           }
         }
