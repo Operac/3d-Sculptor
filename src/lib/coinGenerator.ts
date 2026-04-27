@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { buildArcTextGeometry, loadTrajanFont } from './arcTextGeometry';
 
 export type ModelType = 'coin' | 'plaque';
 export type ReliefStyle = 'elevated' | 'embedded' | 'emboss';
@@ -58,9 +59,16 @@ export const COIN_PRESET: CoinSettings = {
   type: 'coin',
   reliefStyle: 'elevated',
   diameter: 39,
+  // Pocket coin spec (foundry doc V1):
+  //   • Diameter 38–40 mm  (we ship 39 — within range)
+  //   • Thickness 3–4 mm max (must fit in standard wallet)
+  //     → baseHeight 2.0 + rimHeight 1.0 = 3.0 mm overall ✓
+  //   • Text Trajan Bold, 3–4 mm letter height min, 0.8–1.2 mm relief (shallow for pocket wear)
+  //     → fontSize factor 0.20 × innerFaceMm (=18.3) = 3.7 mm ✓
+  //     → textDepthMm 1.0 mm = mid of 0.8–1.2 ✓
   baseHeight: 2.0,       // resin: thicker base = stronger print
   rimWidth: 1.2,
-  rimHeight: 0.8,
+  rimHeight: 1.0,        // pocket coin: modest rim, total thickness 3.0 mm (spec ≤ 4 mm)
   fieldRecess: 0.3,
   maxRelief: 1.5,        // resin: deeper relief for crisp detail
   segments: 768,         // 768 segments → angular step 7.1px → even thin Trajan diagonals (12px) get 1.7× Nyquist
@@ -78,7 +86,7 @@ export const COIN_PRESET: CoinSettings = {
   bottomText: '',
   bottomTextSpan: 100,
   textSize: 1.0,
-  textDepthMm: 0.8,      // resin: 0.8mm min for reliable text resolution
+  textDepthMm: 1.0,      // pocket coin spec: 0.8–1.2 mm shallow relief (mid value)
   textFont: 'bold',
   signatureText: '',
   signatureFont: 'great-vibes',
@@ -148,15 +156,21 @@ export const PLAQUE_PRESET: CoinSettings = {
   backMaterial: { type: 'bronze', metallic: 0.8, roughness: 0.4, color: '#CD7F32' },
 };
 
+// Large plaque spec (foundry doc V1, 425mm):
+//   • Diameter 425 mm, base 5–6 mm, max relief 8–10 mm
+//   • Rim width 10–15 mm, height 3–4 mm
+//   • Text Trajan Semibold; letter height 25–30 mm primary, 15–20 mm secondary; relief 2–3 mm
+//   • Margin from outer edge: 15–20 mm
+// All values below sit at or near the mid-point of each spec range.
 export const LARGE_PLAQUE_PRESET: CoinSettings = {
   type: 'plaque',
   reliefStyle: 'elevated',
   diameter: 425,
-  baseHeight: 5.5,
-  rimWidth: 12.0,
-  rimHeight: 4.0,
+  baseHeight: 5.5,       // base field 5–6 mm ✓
+  rimWidth: 12.0,        // rim width 10–15 mm ✓
+  rimHeight: 4.0,        // rim height 3–4 mm ✓ (top of range; bezels text comfortably)
   fieldRecess: 0.0,
-  maxRelief: 8.0,
+  maxRelief: 8.0,        // max relief 8–10 mm ✓ (low end; portrait relief 4–6 mm fits within)
   segments: 512,         // smooth 425mm circle, capped by face budget if needed
   gridResolution: 768,   // Bambu: maximum for large plaque
   isDoubleFaced: false,
@@ -171,9 +185,11 @@ export const LARGE_PLAQUE_PRESET: CoinSettings = {
   topTextSpan: 160,
   bottomText: '',
   bottomTextSpan: 90,
-  textSize: 1.0,
-  textDepthMm: 3.0,      // resin: deep text for large plaque wall mounting
-  textFont: 'semibold',
+  // textSize 0.70: with our 0.20 × innerFaceMm font factor and innerFaceMm = 200.5 mm,
+  // letter height = 0.20 × 200.5 × 0.70 ≈ 28 mm — mid of the 25–30 mm primary spec.
+  textSize: 0.70,
+  textDepthMm: 3.0,      // text relief 2–3 mm ✓ (top of range; reads at 2–3 m viewing distance)
+  textFont: 'semibold',  // Trajan Semibold per spec ✓
   signatureText: '',
   signatureFont: 'great-vibes',
   signatureSize: 1.0,
@@ -195,13 +211,15 @@ export const LARGE_PLAQUE_PRESET: CoinSettings = {
   backMaterial: { type: 'bronze', metallic: 0.8, roughness: 0.4, color: '#CD7F32' },
 };
 
+// Pocket coin spec (foundry doc V1, 38–40 mm): see COIN_PRESET notes above.
+// POCKET_2 is a silver-finish variant of the same form factor.
 export const POCKET_2_PRESET: CoinSettings = {
   type: 'coin',
   reliefStyle: 'elevated',
   diameter: 39,
-  baseHeight: 1.5,       // resin: slightly thicker than FDM for strength
+  baseHeight: 2.0,       // total thickness 3.0 mm with rim — within 3–4 mm spec ✓
   rimWidth: 1.5,
-  rimHeight: 0.8,
+  rimHeight: 1.0,        // modest rim, total thickness 3.0 mm
   fieldRecess: 0.0,
   maxRelief: 1.5,        // resin: deeper for sharper portrait detail
   segments: 512,         // 512 segments — matches COIN_PRESET for crisp text capture
@@ -219,8 +237,8 @@ export const POCKET_2_PRESET: CoinSettings = {
   bottomText: '',
   bottomTextSpan: 100,
   textSize: 1.0,
-  textDepthMm: 0.8,      // resin: 0.8mm min for reliable text
-  textFont: 'bold',
+  textDepthMm: 1.0,      // pocket coin spec: 0.8–1.2 mm shallow relief (mid value)
+  textFont: 'bold',      // Trajan Bold per spec ✓
   signatureText: '',
   signatureFont: 'great-vibes',
   signatureSize: 1.0,
@@ -304,6 +322,12 @@ export async function generateCoinGeometry(
   const innerRadius = showRim ? radius - rimWidth : radius;
   const zField = baseHeight - fieldRecess;
   const zRim = showRim ? baseHeight + rimHeight : zField;
+
+  // Kick off Trajan font load in parallel with AI depth — no extra wall time.
+  const fontPromise = loadTrajanFont().catch((e) => {
+    console.warn('Trajan font load failed; arc text geometry will be skipped.', e);
+    return null;
+  });
 
   // 1. Get AI Depth Data
   if (onProgress) onProgress("Initializing Image Data...");
@@ -564,10 +588,16 @@ export async function generateCoinGeometry(
     console.error('❌ Trajan Pro not available in canvas — arc text will use fallback serif.');
   }
 
-  // Top arc:    10 o'clock → 2 o'clock  (centred at top = 270°, span = 110°)
-  // Bottom arc: 7 o'clock  → 5 o'clock  (centred at bottom = 90°, span = 60°)
-  drawArcText(topText,    270, topTextSpan,    false, ctx2x); // top arc
-  drawArcText(bottomText,  90, bottomTextSpan, true,  ctx2x);  // bottom arc
+  // ── Arc text NOW comes from TRUE 3D EXTRUDED GEOMETRY (see arcTextGeometry.ts).
+  // We deliberately DO NOT call drawArcText here any more — the canvas-based
+  // text → heightmap → mesh-sample pipeline could not produce Blender-quality
+  // crisp letters at any practical mesh resolution.  Skipping the canvas draw
+  // also means no luminance signal in this region, so the AI depth model and
+  // the textMask treat the text band as flat field — exactly what we want;
+  // the vector text geometry will be welded onto the coin face after the
+  // heightmap mesh is built.
+  void drawArcText; // satisfy linter — function is still defined but unused
+  void topTextSpan; void bottomTextSpan; // referenced when vector text is generated below
 
   // ── Quality Check #14: Stroke width vs mesh grid spacing ─────────────────
   // A text stroke thinner than 2 mesh-vertex spacings cannot be represented
@@ -1481,23 +1511,42 @@ export async function generateCoinGeometry(
     if (u < 0 || u >= procRes || v < 0 || v >= procRes) return 0;
 
     // Sample selection:
-    //   • Text region  → NEAREST sampling. The textMask produced binary plateaus
-    //     (flat-topped, vertical-walled letters). Lanczos-2 has negative lobes
-    //     that RING at sharp depth transitions, smearing letter outlines into
-    //     the soft "wavy" look the user has been seeing. Nearest preserves the
-    //     plateau geometry exactly — every mesh vertex inside a letter gets the
-    //     full plateau depth, every vertex outside gets 0.
-    //   • Everything else → LANCZOS-2. Smooth portrait gradients benefit from
-    //     the higher-order interpolation; the ringing only matters for hard
-    //     binary edges.
+    //   • Text band  → WINNER-TAKES-ALL over the mesh cell footprint.
+    //   • Everything else → LANCZOS-2 for smooth portrait gradients.
+    //
+    // Why winner-takes-all for text:
+    //   The mesh angular step at the text arc is ~7px, but a single mesh vertex
+    //   point-samples ONE pixel of depthMap. Lanczos smears the binary plateau
+    //   into a wavy ring; nearest staircases the edges. Both lose strokes that
+    //   fall between sample points.
+    //   Solution: for each mesh vertex in the text band, scan the 7×3 patch of
+    //   depthMap pixels that the mesh cell actually covers. If ANY of them is
+    //   a text plateau pixel, return the plateau depth. This guarantees every
+    //   letter stroke shows up at full bold weight, with no staircase gaps.
     const ui = Math.round(u);
     const vi = Math.round(v);
-    const idx = vi * procRes + ui;
     let depth: number;
-    if (textMask[idx] > 0) {
-      depth = depthMap[idx]; // nearest — keeps text plateau crisp
+    if (rNorm > 0.78) {
+      // Text band: scan a small window for any text plateau pixel.
+      // Window size matches mesh cell footprint at the text radius:
+      //   tangential ≈ 4 px (half of 7px angular step on each side)
+      //   radial     ≈ 2 px (half of 2.7px ring step on each side, rounded)
+      let maxText = 0;
+      for (let dy = -2; dy <= 2; dy++) {
+        for (let dx = -4; dx <= 4; dx++) {
+          const sx = Math.max(0, Math.min(procRes - 1, ui + dx));
+          const sy = Math.max(0, Math.min(procRes - 1, vi + dy));
+          const sIdx = sy * procRes + sx;
+          if (textMask[sIdx] > maxText) maxText = textMask[sIdx];
+        }
+      }
+      if (maxText > 0) {
+        depth = maxText; // plateau wins — letter is fully opaque in the mesh
+      } else {
+        depth = sampleDepthLanczos(u, v); // field/ring area in text band
+      }
     } else {
-      depth = sampleDepthLanczos(u, v);
+      depth = sampleDepthLanczos(u, v); // portrait/centre — keep Lanczos
     }
 
     // QC #16: Prevent Z-fighting where text base meets field surface.
@@ -1756,6 +1805,134 @@ export async function generateCoinGeometry(
   smoothRingNormals(frontFaceRingsStartIdx, 1);
   if (settings.isDoubleFaced) {
     smoothRingNormals(totalFrontVertices + frontFaceRingsStartIdx, -1);
+  }
+
+  // ── VECTOR ARC TEXT — TRUE 3D EXTRUDED GEOMETRY ──────────────────────────
+  // The text is built from Trajan Pro's vector outlines (via opentype.js) as
+  // ExtrudeGeometry prisms — vertical walls, sharp edges, real counters in
+  // B/O/R/etc.  This is the Blender-quality crisp text the heightmap
+  // pipeline could never deliver.
+  //
+  // Layout in mm (matches the historical canvas-text positioning):
+  //   • innerFaceMm  = radius - (showRim ? rimWidth : 0)
+  //   • edgeClearance = 0.095 × innerFaceMm  (≈ 1.4 × half-cap-height)
+  //   • textArcRadius = innerFaceMm - edgeClearance   (centre of cap height)
+  //   • fontSize     = 0.20 × innerFaceMm × textSize  (cap height in mm)
+  //   • letterSpacing = 0.22 × fontSize
+  //   • depth        = textDepthMm (uses the same slider as before)
+  //   • Z bottom     = zField  (text rises from the field surface)
+  {
+    const haveTopText    = (topText    || '').trim().length > 0;
+    const haveBottomText = (bottomText || '').trim().length > 0;
+    if (haveTopText || haveBottomText) {
+      const font = await fontPromise;
+      if (font) {
+        const innerFaceMm   = radius - (showRim ? rimWidth : 0);
+        const noRimBorderMm = Math.max(radius * 0.11, 6);
+        const edgeClearMm   = showRim ? innerFaceMm * 0.095 : noRimBorderMm;
+        const arcRadiusMm   = innerFaceMm - edgeClearMm;
+        const fontSizeMm    = innerFaceMm * 0.20 * textSize;
+        const letterSpacing = fontSizeMm * 0.22;
+
+        const textGeoms: THREE.BufferGeometry[] = [];
+
+        if (haveTopText) {
+          // THREE coords: +X = 3 o'clock, +Y = 12 o'clock.  Top arc centred at
+          // 12 o'clock = +Y → centreAngle = 90°.
+          const g = buildArcTextGeometry(font, {
+            text: topText,
+            arcRadius: arcRadiusMm,
+            centreAngleDeg: 90,
+            arcSpanDeg: topTextSpan,
+            fontSizeMm,
+            letterSpacingMm: letterSpacing,
+            textDepthMm,
+            faceZ: zField,
+            flipBaseline: false,
+          });
+          if (g.attributes.position) textGeoms.push(g);
+        }
+
+        if (haveBottomText) {
+          // Bottom arc centred at 6 o'clock = -Y → centreAngle = -90° (= 270°).
+          const g = buildArcTextGeometry(font, {
+            text: bottomText,
+            arcRadius: arcRadiusMm,
+            centreAngleDeg: -90,
+            arcSpanDeg: bottomTextSpan,
+            fontSizeMm,
+            letterSpacingMm: letterSpacing,
+            textDepthMm,
+            faceZ: zField,
+            flipBaseline: true,
+          });
+          if (g.attributes.position) textGeoms.push(g);
+        }
+
+        // Mirror to back face if double-faced (matches the X+Z negation done
+        // for the heightmap mesh above).
+        if (settings.isDoubleFaced) {
+          const backGeoms: THREE.BufferGeometry[] = [];
+          for (const g of textGeoms) {
+            const back = g.clone();
+            // Mirror X and Z: applyMatrix4 with diag(-1,1,-1) — also need to
+            // flip triangle winding so normals stay outward.
+            back.applyMatrix4(new THREE.Matrix4().makeScale(-1, 1, -1));
+            // Flip winding: invert each triangle's index order.
+            const idx = back.getIndex();
+            if (idx) {
+              const arr = idx.array as Uint16Array | Uint32Array;
+              for (let i = 0; i < arr.length; i += 3) {
+                const t = arr[i + 1]; arr[i + 1] = arr[i + 2]; arr[i + 2] = t;
+              }
+              idx.needsUpdate = true;
+            }
+            back.computeVertexNormals();
+            backGeoms.push(back);
+          }
+          textGeoms.push(...backGeoms);
+        }
+
+        if (textGeoms.length > 0) {
+          // Make every text geometry have the same attribute set as the coin
+          // mesh (position + normal, indexed).  computeVertexNormals on each
+          // ensures normals exist; mergeGeometries then concatenates them.
+          for (const g of textGeoms) {
+            if (!g.attributes.normal) g.computeVertexNormals();
+          }
+
+          // Coin mesh has only position+normal; strip any extras (uv, etc.)
+          // from text geos to keep mergeGeometries happy.
+          const coinAttrs = new Set(Object.keys(geometry.attributes));
+          for (const g of textGeoms) {
+            for (const key of Object.keys(g.attributes)) {
+              if (!coinAttrs.has(key)) g.deleteAttribute(key);
+            }
+          }
+
+          const merged = mergeGeometries([geometry, ...textGeoms], false);
+          if (merged) {
+            // Carry the coin-mesh material groups forward; text uses the same
+            // (default) material group as the coin face.
+            merged.clearGroups();
+            for (const grp of geometry.groups) {
+              merged.addGroup(grp.start, grp.count, grp.materialIndex);
+            }
+            // Replace the geometry reference for the QC pass below.
+            (geometry as unknown as { dispose: () => void }).dispose?.();
+            // Reassign via Object.assign to keep `geometry` const-binding.
+            Object.assign(geometry, {
+              attributes: merged.attributes,
+              index: merged.index,
+              groups: merged.groups,
+              boundingBox: null,
+              boundingSphere: null,
+            });
+            console.info(`✅ Vector arc text merged: ${textGeoms.length} text geometries → coin mesh`);
+          }
+        }
+      }
+    }
   }
 
   // ── POST-GEOMETRY QUALITY CHECKS ─────────────────────────────────────────
