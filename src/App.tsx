@@ -16,13 +16,17 @@ import {
   EyeOff
 } from 'lucide-react';
 import { CoinViewer } from './components/CoinViewer';
+import { TemplateModeView } from './components/TemplateModeView';
 import { CoinSettings, DEFAULT_SETTINGS, COIN_PRESET, PLAQUE_PRESET, LARGE_PLAQUE_PRESET, POCKET_2_PRESET, exportToSTL } from './lib/coinGenerator';
 import * as THREE from 'three';
+
+type AppMode = 'create' | 'template';
 
 // Use a high-quality placeholder for the default image
 const DEFAULT_IMAGE = "https://picsum.photos/seed/coin-demo/1024/1024";
 
 export default function App() {
+  const [appMode, setAppMode] = useState<AppMode>('create');
   const [imageSrc, setImageSrc] = useState<string>(DEFAULT_IMAGE);
   const [settings, setSettings] = useState<CoinSettings>(DEFAULT_SETTINGS);
   const [isSettingsOpen, setIsSettingsOpen] = useState(true);
@@ -151,6 +155,36 @@ export default function App() {
         </div>
       </header>
 
+      {/* Mode picker — choose between building from scratch or importing a template */}
+      <div className="border-b border-white/[0.06] bg-black/40">
+        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 flex gap-1 py-2">
+          <button
+            onClick={() => setAppMode('create')}
+            className={`px-4 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider border transition ${
+              appMode === 'create'
+                ? 'bg-amber-500/15 border-amber-500/40 text-amber-300'
+                : 'bg-white/[0.03] border-white/[0.06] text-neutral-400 hover:text-white hover:border-white/20'
+            }`}
+          >
+            🪙 Create Your Coin
+          </button>
+          <button
+            onClick={() => setAppMode('template')}
+            className={`px-4 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider border transition ${
+              appMode === 'template'
+                ? 'bg-amber-500/15 border-amber-500/40 text-amber-300'
+                : 'bg-white/[0.03] border-white/[0.06] text-neutral-400 hover:text-white hover:border-white/20'
+            }`}
+          >
+            📥 Import Template + Add Image
+          </button>
+        </div>
+      </div>
+
+      {appMode === 'template' ? (
+        <TemplateModeView />
+      ) : (
+      <>
       <main className="flex-1 max-w-[1600px] mx-auto w-full px-4 sm:px-6 py-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Left Column: Viewer */}
         <div className="lg:col-span-8 flex flex-col gap-5">
@@ -280,6 +314,8 @@ export default function App() {
         onChange={handleImageUpload}
         className="hidden"
       />
+      </>
+      )}
 
       {/* Footer */}
       <footer className="border-t border-white/[0.04] bg-black/40 py-4 px-6 mt-auto">
