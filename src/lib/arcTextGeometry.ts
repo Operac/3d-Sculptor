@@ -104,21 +104,21 @@ export function buildFlatTextGeometry(
     const glyph = font.charToGlyph(ch);
     if (!glyph || !glyph.path) { xCursor += widths[i]; continue; }
     const otPath = glyph.getPath(0, 0, emSize);
-    const shapes = openTypePathToShapes(otPath);
+    // ✅ Pass emSize for adaptive outline sampling
+    const shapes = openTypePathToShapes(otPath, emSize);
     if (shapes.length === 0) { xCursor += widths[i]; continue; }
 
     // Small chamfer ≈ 3% of font size, capped at 25% of text depth.
-    // (Flat text isn't shrunk-to-fit, so fontSizeMm IS the rendered size.)
     const bevelSizeMm = Math.min(fontSizeMm * 0.03, textDepthMm * 0.25);
     const perCharGeoms: THREE.BufferGeometry[] = [];
     for (const shape of shapes) {
       const g = new THREE.ExtrudeGeometry(shape, {
-        depth: textDepthMm - bevelSizeMm * 2,    // depth+bevels = textDepthMm total
+        depth: textDepthMm - bevelSizeMm * 2,
         bevelEnabled: true,
-        bevelThickness: bevelSizeMm,             // depth of the bevel inward
-        bevelSize:      bevelSizeMm,             // distance the bevel extends out from the shape
-        bevelSegments:  3,                        // bevel curve smoothness
-        curveSegments:  20,                       // glyph bezier resolution — was 8 (too faceted)
+        bevelThickness: bevelSizeMm,
+        bevelSize:      bevelSizeMm,
+        bevelSegments:  5,                        // slightly more for smooth bevel on small text
+        curveSegments:  20,
       });
       perCharGeoms.push(g);
     }
@@ -126,10 +126,6 @@ export function buildFlatTextGeometry(
       ? perCharGeoms[0]
       : (mergeGeometries(perCharGeoms, false) ?? perCharGeoms[0]);
 
-    // No Y-scale: openTypePathToShapes() already negates Y at source so the
-    // glyph is Y-up with CCW outer winding → outward normals (no culling).
-    // Position: glyph origin (after Y-negation) is at left edge / baseline.
-    // Lift by bevelSize so the bevel sits ON the face plane (not below it).
     charGeo.translate(xCursor, baselineY, faceZ + bevelSizeMm);
     charGeoms.push(charGeo);
 
@@ -181,25 +177,11 @@ export function buildArcTextGeometry(
   if (!text || !text.trim()) return new THREE.BufferGeometry();
   const str = text.trim().toUpperCase();
 
-  // opentype.js draws glyphs at a given font size where Y points DOWN (canvas
-  // convention).  We want UP, and the visual cap-height should equal fontSizeMm.
-  // For Trajan Pro, ascender ≈ unitsPerEm × 0.72; cap-height ≈ unitsPerEm × 0.66.
-  // Using full em as a conservative size means cap-height ≈ fontSizeMm × 0.92.
-  // We compensate so the visible cap-height matches the requested size.
   const os2 = font.tables.os2 as unknown as { sCapHeight?: number } | undefined;
   const capHeightRatio = os2?.sCapHeight ? os2.sCapHeight / font.unitsPerEm : 0.66;
   const emSize = fontSizeMm / capHeightRatio;
 
-  // Layout: DIRECT fit calculation.  The previous iterative shrink (max 8
-  // passes of × 0.92, ~50 % reduction floor) ran out of headroom for long
-  // strings — they overflowed the arc span and letters overlapped, producing
-  // the chaotic ribbon the user reported.
-  //
-  // Steps:
-  //   1. Measure widths at the requested scale (no shrink yet).
-  //   2. If the total exceeds the available arc length, scale BOTH the glyph
-  //      size AND the letter-spacing by maxArcLen/totalW so they fit exactly.
-  //   3. Re-measure to get the final widths used for placement.
+  // Layout: DIRECT fit calculation.
   const maxArcLen = (arcSpanDeg * 0.92 * Math.PI / 180) * arcRadius;
   let scale = emSize;
   let effectiveLetterSpacing = letterSpacingMm;
@@ -226,14 +208,6 @@ export function buildArcTextGeometry(
   // Actual rendered cap-height in mm (post-shrink) — used below for bevel sizing.
   const actualFontSizeMm = scale * capHeightRatio;
 
-  // Distribute across arc.
-  // ITERATION DIRECTION: in THREE coords (Y-up), increasing angle goes CCW.
-  // For TOP arc (centre = +π/2), reading left-to-right means moving CW =
-  // DECREASING angle.  We start at the upper-left edge (HIGH angle), step
-  // through the centre, end at upper-right (LOW angle).
-  // For BOTTOM arc the same algorithm naturally produces upside-down
-  // characters (because rotateZ by -π puts them upright→inverted), which
-  // read correctly when the coin is rotated 180°.
   const totalArcAngle = totalW / arcRadius;
   const centreRad = (centreAngleDeg * Math.PI) / 180;
   const startAngle = centreRad + totalArcAngle / 2;       // start at HIGH angle
@@ -248,40 +222,22 @@ export function buildArcTextGeometry(
     const charAngle = cumAngle - halfAngle;               // step CW
     cumAngle -= widths[i] / arcRadius;                    // advance CW
 
-    // Build shapes for this glyph.
     const glyph = font.charToGlyph(ch);
     if (!glyph || !glyph.path || glyph.unicode === undefined) continue;
     const otPath = glyph.getPath(0, 0, scale);
-    const shapes = openTypePathToShapes(otPath);
+    // ✅ Pass the current em‑scale for adaptive outline sampling
+    const shapes = openTypePathToShapes(otPath, scale);
     if (shapes.length === 0) continue;
 
-    // Each character builds an ExtrudeGeometry per shape, then we merge,
-    // then we orient + translate to the arc position.  No Y-scale needed:
-    // openTypePathToShapes() already negates Y at source so glyphs are Y-up
-    // with proper CCW outer winding → ExtrudeGeometry produces correct
-    // OUTWARD normals (no front-face culling).
-    //
-    // Quality settings (matched to Blender's TEXT_RELIEF + bevel_depth idiom):
-    //   • curveSegments: 20 — Trajan glyphs have many subtle curves; 6 gave
-    //     a faceted/pixelated appearance the user complained about.
-    //   • bevel: small chamfer (~3% of ACTUAL cap-height after shrink-to-fit).
-    //     Was 6% of REQUESTED size, which broke when text was shrunk to fit:
-    //     a 7 mm requested → 1.5 mm rendered letter ended up with a 0.42 mm
-    //     bevel that swallowed every stroke into a featureless ridge.
-    //     Now uses the post-shrink `actualFontSizeMm` so bevel scales with
-    //     the rendered glyph.  Hard cap at 25 % of textDepth so we never
-    //     invert geometry on very shallow text.  Trajan stem widths are
-    //     ≈12 % of cap-height, so 3 % bevel = ~25 % of stroke width — visible
-    //     edge highlight without merging adjacent strokes.
     const bevelSizeMm = Math.min(actualFontSizeMm * 0.03, textDepthMm * 0.25);
     const perCharGeoms: THREE.BufferGeometry[] = [];
     for (const shape of shapes) {
       const g = new THREE.ExtrudeGeometry(shape, {
-        depth: textDepthMm - bevelSizeMm * 2,    // total height = depth + 2 × bevel
+        depth: textDepthMm - bevelSizeMm * 2,
         bevelEnabled: true,
         bevelThickness: bevelSizeMm,
         bevelSize:      bevelSizeMm,
-        bevelSegments:  3,
+        bevelSegments:  5,
         curveSegments:  20,
       });
       perCharGeoms.push(g);
@@ -290,19 +246,13 @@ export function buildArcTextGeometry(
       ? perCharGeoms[0]
       : (mergeGeometries(perCharGeoms, false) ?? perCharGeoms[0]);
 
-    // Centre horizontally on the character's advance width so the arc
-    // distributes letters by their geometric centres.
+    // Centre horizontally on the character's advance width
     charGeo.translate(-widths[i] / 2, 0, 0);
 
-    // Rotate so the character's baseline lies along the arc tangent and
-    // "up" points outward (toward rim).
-    //   At top centre (charAngle = π/2): rotation = 0  → upright ✓
-    //   At bottom centre (charAngle = -π/2): rotation = -π → upside-down ✓
+    // Rotate to follow arc tangent
     charGeo.rotateZ(charAngle - Math.PI / 2);
 
-    // Translate to the position on the arc circle (XY plane).  Lift Z by
-    // bevelSize so the bevel sits ON the face plane instead of below it
-    // (otherwise the bottom bevel ramp would dip into the coin field).
+    // Translate to position on the arc circle
     charGeo.translate(
       arcRadius * Math.cos(charAngle),
       arcRadius * Math.sin(charAngle),
@@ -335,8 +285,15 @@ export function buildArcTextGeometry(
  * the entire mesh becomes invisible.  By flipping at the path level, the
  * outer contours come out CCW → ExtrudeGeometry produces correct outward
  * normals → faces are visible.
+ *
+ * @param otPath - The opentype path object.
+ * @param emSize - The em‑size in mm used for glyph scaling; determines adaptive
+ *                 outline sampling density.
  */
-function openTypePathToShapes(otPath: opentype.Path): THREE.Shape[] {
+function openTypePathToShapes(otPath: opentype.Path, emSize: number): THREE.Shape[] {
+  // Adaptive divisions: 1 sample per ~0.02 mm of em‑size, minimum 50
+  const outlineDivisions = Math.max(50, Math.round(emSize / 0.02));
+
   // First pass: split commands into subpaths.
   type Sub = { commands: opentype.PathCommand[] };
   const subs: Sub[] = [];
@@ -351,9 +308,7 @@ function openTypePathToShapes(otPath: opentype.Path): THREE.Shape[] {
   }
 
   // Build a THREE.Path for each subpath, plus its signed area.
-  // Y is negated here, so:
-  //   • outer contours (CW in TTF Y-down) become CCW → positive shoelace area
-  //   • holes (CCW in TTF Y-down) become CW → negative shoelace area
+  // Y is negated here.
   const built: { path: THREE.Path; area: number; bbox: THREE.Box2 }[] = [];
   for (const s of subs) {
     const p = new THREE.Path();
@@ -411,68 +366,62 @@ function openTypePathToShapes(otPath: opentype.Path): THREE.Shape[] {
     built.push({ path: p, area, bbox });
   }
 
-   // Determine orientation correction: after Y-flip, outer contours should be
-   // CCW (positive area). If the largest subpath (outermost) has negative area,
-   // all subpaths are inverted — flip them so outer becomes positive and holes
-   // become negative (CW).
-   let maxAbsArea = 0;
-   let maxArea = 0;
-   for (const b of built) {
-     const absA = Math.abs(b.area);
-     if (absA > maxAbsArea) {
-       maxAbsArea = absA;
-       maxArea = b.area;
-     }
-   }
-   const flipAll = maxArea < 0;
+  // Determine orientation correction.
+  let maxAbsArea = 0;
+  let maxArea = 0;
+  for (const b of built) {
+    const absA = Math.abs(b.area);
+    if (absA > maxAbsArea) {
+      maxAbsArea = absA;
+      maxArea = b.area;
+    }
+  }
+  const flipAll = maxArea < 0;
 
-   // Assemble shapes: each positive-area path is an outer Shape; each
-   // negative-area path becomes a hole on the smallest enclosing outer.
-   const shapes: { shape: THREE.Shape; bbox: THREE.Box2 }[] = [];
-   // Outer shapes (positive area after correction)
-   for (const b of built) {
-     let points = b.path.getPoints();
-     let area = b.area;
-     if (flipAll) {
-       points = points.reverse();
-       area = -area;
-     }
-     if (area > 0) {
-       const s = new THREE.Shape(points);
-       shapes.push({ shape: s, bbox: b.bbox });
-     }
-   }
-   // Holes (negative area after correction)
-   for (const b of built) {
-     let points = b.path.getPoints();
-     let area = b.area;
-     if (flipAll) {
-       points = points.reverse();
-       area = -area;
-     }
-     if (area <= 0) {
-       // Find smallest-area outer shape that contains this hole's bbox.
-       let host: { shape: THREE.Shape; bbox: THREE.Box2 } | null = null;
-       let bestArea = Infinity;
-       for (const s of shapes) {
-         if (
-           s.bbox.containsBox(b.bbox)
-         ) {
-           const a = (s.bbox.max.x - s.bbox.min.x) * (s.bbox.max.y - s.bbox.min.y);
-           if (a < bestArea) {
-             host = s;
-             bestArea = a;
-           }
-         }
-       }
-       if (host) {
-         host.shape.holes.push(new THREE.Path(points));
-       } else {
-         // Orphan hole: treat as filled outer to avoid lost geometry.
-         shapes.push({ shape: new THREE.Shape(points), bbox: b.bbox });
-       }
-     }
-   }
+  // Assemble shapes: each positive-area path is an outer Shape; each
+  // negative-area path becomes a hole on the smallest enclosing outer.
+  const shapes: { shape: THREE.Shape; bbox: THREE.Box2 }[] = [];
+  for (const b of built) {
+    // ✅ Use adaptive divisions for smooth outlines
+    let points = b.path.getPoints(outlineDivisions);
+    let area = b.area;
+    if (flipAll) {
+      points = points.reverse();
+      area = -area;
+    }
+    if (area > 0) {
+      const s = new THREE.Shape(points);
+      shapes.push({ shape: s, bbox: b.bbox });
+    }
+  }
+  // Holes (negative area after correction)
+  for (const b of built) {
+    let points = b.path.getPoints(outlineDivisions);
+    let area = b.area;
+    if (flipAll) {
+      points = points.reverse();
+      area = -area;
+    }
+    if (area <= 0) {
+      let host: { shape: THREE.Shape; bbox: THREE.Box2 } | null = null;
+      let bestArea = Infinity;
+      for (const s of shapes) {
+        if (s.bbox.containsBox(b.bbox)) {
+          const a = (s.bbox.max.x - s.bbox.min.x) * (s.bbox.max.y - s.bbox.min.y);
+          if (a < bestArea) {
+            host = s;
+            bestArea = a;
+          }
+        }
+      }
+      if (host) {
+        host.shape.holes.push(new THREE.Path(points));
+      } else {
+        // Orphan hole: treat as filled outer to avoid lost geometry.
+        shapes.push({ shape: new THREE.Shape(points), bbox: b.bbox });
+      }
+    }
+  }
 
   return shapes.map((s) => s.shape);
 }
